@@ -2,70 +2,80 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.metrics import silhouette_score
 import nltk
-from nltk.stem import PorterStemmer
+from nltk.tokenize import word_tokenize
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import stopwords
 import io
 from collections import Counter
 import re
+from gensim.models import Word2Vec
+from gensim.models.phrases import Phrases, Phraser
 
 # Download necessary NLTK data
 nltk.download('punkt', quiet=True)
 nltk.download('stopwords', quiet=True)
+nltk.download('wordnet', quiet=True)
 
-# Initialize stemmer and stopwords
-stemmer = PorterStemmer()
-stop_words = set(nltk.corpus.stopwords.words('english'))
+# Initialize lemmatizer and stopwords
+lemmatizer = WordNetLemmatizer()
+stop_words = set(stopwords.words('english'))
 
 def preprocess_text(text):
     # Convert to lowercase and tokenize
-    words = nltk.word_tokenize(text.lower())
-    # Remove stopwords and stem
-    return ' '.join([stemmer.stem(word) for word in words if word.isalnum() and word not in stop_words])
+    words = word_tokenize(text.lower())
+    # Remove stopwords and lemmatize
+    return ' '.join([lemmatizer.lemmatize(word) for word in words if word.isalnum() and word not in stop_words])
 
-def get_cluster_name(cluster_keywords, min_words=1, max_words=3):
+def train_word2vec(texts):
+    sentences = [text.split() for text in texts]
+    phrases = Phrases(sentences, min_count=1, threshold=1)
+    bigram = Phraser(phrases)
+    sentences = [bigram[sent] for sent in sentences]
+    model = Word2Vec(sentences, vector_size=100, window=5, min_count=1, workers=4)
+    return model
+
+def get_optimal_clusters(X, max_clusters=20):
+    silhouette_scores = []
+    for n_clusters in range(2, max_clusters+1):
+        clusterer = AgglomerativeClustering(n_clusters=n_clusters)
+        cluster_labels = clusterer.fit_predict(X)
+        silhouette_avg = silhouette_score(X, cluster_labels)
+        silhouette_scores.append(silhouette_avg)
+    return silhouette_scores.index(max(silhouette_scores)) + 2
+
+def get_cluster_name(cluster_keywords, word2vec_model, min_words=1, max_words=3):
     # Clean and split keywords
     words = [word for keyword in cluster_keywords for word in re.findall(r'\b\w+\b', keyword.lower())]
     
     # Count word frequencies
     word_counts = Counter(words)
     
-    # Define words to exclude
-    exclude_words = set(['for', 'what', 'why', 'how', 'when', 'where', 'it', 'which', 'who', 'whom', 'whose', 'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'shall', 'should', 'may', 'might', 'must', 'can', 'could', 'that'])
-    
-    # Get the most common words, excluding certain words
+    # Get the most common words
     common_words = [word for word, count in word_counts.most_common() 
-                    if word not in exclude_words and len(word) > 1]
+                    if word not in stop_words and len(word) > 1]
     
-    # Function to get the most representative words
-    def get_representative_words(words, min_n=min_words, max_n=max_words):
-        word_set = set()
-        result = []
-        for word in words:
-            if len(result) >= max_n:
-                break
-            if word not in word_set and not any(word in w or w in word for w in word_set):
-                word_set.add(word)
-                result.append(word)
-            if len(result) >= min_n:
-                # Check if the next word is significantly less common
-                if len(words) > len(result) and word_counts[words[len(result)]] < word_counts[result[-1]] / 2:
-                    break
-        return result
+    # Use Word2Vec to find related words
+    related_words = []
+    for word in common_words[:5]:  # Consider top 5 common words
+        if word in word2vec_model.wv:
+            related_words.extend([w for w, _ in word2vec_model.wv.most_similar(word, topn=3)])
+    
+    # Combine common and related words
+    candidate_words = common_words + related_words
     
     # Get the most representative words
-    representative_words = get_representative_words(common_words)
-    
-    return ' '.join(representative_words)
-    
-    # If we don't have enough words, add generic terms
-    while len(representative_words) < 3:
-        if 'system' not in representative_words and 'system' in word_counts:
-            representative_words.append('system')
-        elif 'pos' not in representative_words and 'pos' in word_counts:
-            representative_words.append('pos')
-        else:
-            break  # If we can't add 'system' or 'pos', we'll stop here
+    representative_words = []
+    for word in candidate_words:
+        if len(representative_words) >= max_words:
+            break
+        if word not in representative_words and not any(word in w or w in word for w in representative_words):
+            representative_words.append(word)
+        if len(representative_words) >= min_words:
+            if len(candidate_words) > len(representative_words) and word_counts.get(candidate_words[len(representative_words)], 0) < word_counts.get(representative_words[-1], 1) / 2:
+                break
     
     return ' '.join(representative_words)
 
@@ -73,78 +83,53 @@ def get_cluster_name(cluster_keywords, min_words=1, max_words=3):
 st.title("Keyword Clustering Tool")
 st.markdown("""
     **Instructions:**
-    1. Upload a CSV file with your keywords and optional fields (Search Volume, CPC, Ranked Position, URL).
-    2. Adjust the number of clusters for categorization.
-    3. The tool will classify and cluster the keywords, and generate a downloadable CSV file with the results.
+    1. Upload a CSV file with your keywords in a column named 'Keywords'.
+    2. The tool will automatically determine the optimal number of clusters.
+    3. Click 'Classify and Cluster Keywords' to process your data.
+    4. Download the results as a CSV file.
 """)
-
-# Template download
-def generate_template():
-    template = pd.DataFrame({
-        "Keywords": ["Example keyword 1", "Example keyword 2"],
-        "Search Volume": [1000, 500],
-        "CPC": [0.5, 0.7],
-        "Ranked Position": [1, 2],
-        "URL": ["http://example.com/1", "http://example.com/2"]
-    })
-    return template.to_csv(index=False).encode('utf-8')
-
-st.download_button(
-    label="Download Template CSV",
-    data=generate_template(),
-    file_name="keyword_template.csv",
-    mime="text/csv"
-)
 
 # File upload
 uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
 
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
-    required_columns = ["Keywords"]
-    optional_columns = ["Search Volume", "CPC", "Ranked Position", "URL"]
-    
     if "Keywords" not in df.columns:
         st.error("CSV must contain 'Keywords' column.")
     else:
-        # Ensure optional columns are present and fill NaN with empty strings
-        for col in optional_columns:
-            if col not in df.columns:
-                df[col] = ''
-            else:
-                df[col] = df[col].fillna('')
-        
-        df['Keywords'] = df['Keywords'].astype(str)
-
         # Preprocess keywords
         df['Processed_Keywords'] = df['Keywords'].apply(preprocess_text)
 
-        # User input for number of clusters
-        num_clusters = st.slider("Select Number of Clusters", min_value=2, max_value=50, value=10, step=1)
+        # Train Word2Vec model
+        word2vec_model = train_word2vec(df['Processed_Keywords'])
+
+        # Vectorize the processed keywords
+        vectorizer = TfidfVectorizer(ngram_range=(1, 2))
+        X = vectorizer.fit_transform(df['Processed_Keywords'])
+
+        # Determine optimal number of clusters
+        optimal_clusters = get_optimal_clusters(X.toarray())
+        st.write(f"Optimal number of clusters: {optimal_clusters}")
 
         if st.button("Classify and Cluster Keywords"):
-            # Vectorize the processed keywords
-            vectorizer = TfidfVectorizer()
-            X = vectorizer.fit_transform(df['Processed_Keywords'])
-        
             # Perform clustering
-            kmeans = KMeans(n_clusters=num_clusters, random_state=42)
-            df['Cluster'] = kmeans.fit_predict(X)
-        
+            clustering = AgglomerativeClustering(n_clusters=optimal_clusters)
+            df['Cluster'] = clustering.fit_predict(X.toarray())
+
             # Generate cluster names
             cluster_names = []
-            for cluster in range(num_clusters):
+            for cluster in range(optimal_clusters):
                 cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
-                cluster_name = get_cluster_name(cluster_keywords, min_words=1, max_words=3)
+                cluster_name = get_cluster_name(cluster_keywords, word2vec_model)
                 cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
-        
+
             cluster_names_df = pd.DataFrame(cluster_names)
             
             # Merge cluster names with main dataframe
             final_df = pd.merge(df, cluster_names_df, on='Cluster', how='left')
             
             # Select and order the final columns
-            final_columns = ['Keywords', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Cluster Name']
+            final_columns = ['Keywords', 'Cluster', 'Cluster Name']
             final_df = final_df[final_columns]
         
             # Prepare CSV for download
