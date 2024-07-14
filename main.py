@@ -144,8 +144,8 @@ if uploaded_file is not None:
                     # Set Keyword Group Name for Miscellaneous keywords
                     final_df.loc[final_df['Cluster'] == 'Miscellaneous', 'Keyword Group Name'] = 'Miscellaneous'
                     
-                    # Remove empty rows
-                    final_df = final_df.dropna(subset=['Cluster', 'Keyword']).reset_index(drop=True)
+                    # Remove empty rows and redundant columns
+                    final_df = final_df[['Keyword', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Keyword Group Name']].dropna(subset=['Keyword']).reset_index(drop=True)
                     
                     output = io.BytesIO()
                     final_df.to_csv(output, index=False)
