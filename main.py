@@ -30,8 +30,11 @@ def get_cluster_name(cluster_keywords):
     # Count word frequencies
     word_counts = Counter(words)
     
-    # Get the most common words
-    common_words = [word for word, count in word_counts.most_common(10)]
+    # Define words to exclude
+    exclude_words = set(['for', 'what', 'why', 'how', 'when', 'where', 'which', 'who', 'whom', 'whose', 'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of'])
+    
+    # Get the most common words, excluding certain words
+    common_words = [word for word, count in word_counts.most_common(20) if word not in exclude_words and len(word) > 1]
     
     # Function to check if a word is too similar to already selected words
     def is_too_similar(word, selected_words):
@@ -44,6 +47,14 @@ def get_cluster_name(cluster_keywords):
             break
         if not is_too_similar(word, selected_words):
             selected_words.append(word)
+    
+    # If we don't have 3 words, add the most common excluded words
+    if len(selected_words) < 3:
+        for word in [w for w, _ in word_counts.most_common() if w in exclude_words]:
+            if len(selected_words) >= 3:
+                break
+            if word not in selected_words:
+                selected_words.append(word)
     
     return ' '.join(selected_words)
 
