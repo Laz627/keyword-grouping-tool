@@ -65,9 +65,10 @@ if uploaded_file is not None:
         # Ensure optional columns are present and fill NaN with empty strings
         for col in ["Search Volume", "CPC", "Ranked Position", "URL"]:
             if col not in df.columns:
-                df[col] = None
-            df[col] = df[col].fillna('')
-
+                df[col] = ''
+            else:
+                df[col] = df[col].fillna('')
+        
         df['Keywords'] = df['Keywords'].astype(str)
 
         # User input for L1 and L2 classifications
@@ -134,17 +135,11 @@ if uploaded_file is not None:
                         if col not in final_df.columns:
                             final_df[col] = ''
                     
-                    # Group and save the results to a CSV file
-                    grouped_output = final_df.groupby('Cluster').agg({
-                        'Keyword': ' | '.join,
-                        'Search Volume': lambda x: ' | '.join([str(v) for v in x]),
-                        'CPC': lambda x: ' | '.join([str(v) for v in x]),
-                        'Ranked Position': lambda x: ' | '.join([str(v) for v in x]),
-                        'URL': ' | '.join
-                    }).reset_index()
+                    # Separate rows for each keyword and their attributes
+                    output_df = final_df.explode('Keyword')
                     
                     output = io.BytesIO()
-                    grouped_output.to_csv(output, index=False)
+                    output_df.to_csv(output, index=False)
                     output.seek(0)
                     
                     st.download_button(
@@ -154,7 +149,7 @@ if uploaded_file is not None:
                         mime="text/csv"
                     )
 
-                    st.dataframe(grouped_output)
+                    st.dataframe(output_df)
                 except ValueError as e:
                     st.error(f"An error occurred during clustering: {e}")
                     st.text("Make sure your data is properly formatted and contains enough unique terms to cluster.")
