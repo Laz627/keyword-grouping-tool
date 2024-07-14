@@ -6,22 +6,8 @@ from sklearn.cluster import KMeans
 import nltk
 from nltk.stem import PorterStemmer
 import io
-from collections import Counter
 import re
-
-# Download necessary NLTK data
-nltk.download('punkt', quiet=True)
-nltk.download('stopwords', quiet=True)
-
-# Initialize stemmer and stopwords
-stemmer = PorterStemmer()
-stop_words = set(nltk.corpus.stopwords.words('english'))
-
-def preprocess_text(text):
-    # Convert to lowercase and tokenize
-    words = nltk.word_tokenize(text.lower())
-    # Remove stopwords and stem
-    return ' '.join([stemmer.stem(word) for word in words if word.isalnum() and word not in stop_words])
+from collections import Counter
 
 def get_cluster_name(cluster_keywords):
     # Clean and split keywords
@@ -33,42 +19,35 @@ def get_cluster_name(cluster_keywords):
     # Define words to exclude
     exclude_words = set(['for', 'what', 'why', 'how', 'when', 'where', 'which', 'who', 'whom', 'whose', 'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'shall', 'should', 'may', 'might', 'must', 'can', 'could'])
     
-    # Calculate the threshold for considering a word (e.g., must appear in at least 10% of keywords)
-    threshold = max(2, len(cluster_keywords) * 0.1)
-    
-    # Get the most common words, excluding certain words and applying the threshold
+    # Get the most common words, excluding certain words
     common_words = [word for word, count in word_counts.most_common() 
-                    if word not in exclude_words 
-                    and len(word) > 1 
-                    and count >= threshold]
+                    if word not in exclude_words and len(word) > 1]
     
-    # Function to check if a word is too similar to already selected words
-    def is_too_similar(word, selected_words):
-        return any(word.startswith(w) or w.startswith(word) for w in selected_words)
-    
-    # Select diverse words for the cluster name
-    selected_words = []
-    for word in common_words:
-        if len(selected_words) >= 3:
-            break
-        if not is_too_similar(word, selected_words):
-            selected_words.append(word)
-    
-    # If we don't have 3 words, add the most common excluded words
-    if len(selected_words) < 3:
-        for word in [w for w, c in word_counts.most_common() if w in exclude_words and c >= threshold]:
-            if len(selected_words) >= 3:
+    # Function to get the most representative words
+    def get_representative_words(words, n=3):
+        word_set = set()
+        result = []
+        for word in words:
+            if len(result) >= n:
                 break
-            if word not in selected_words:
-                selected_words.append(word)
+            if word not in word_set and not any(word in w or w in word for w in word_set):
+                word_set.add(word)
+                result.append(word)
+        return result
     
-    # If we still don't have 3 words, add the next most common words
-    while len(selected_words) < 3 and common_words:
-        word = common_words.pop(0)
-        if word not in selected_words:
-            selected_words.append(word)
+    # Get the most representative words
+    representative_words = get_representative_words(common_words)
     
-    return ' '.join(selected_words)
+    # If we don't have enough words, add generic terms
+    while len(representative_words) < 3:
+        if 'system' not in representative_words and 'system' in word_counts:
+            representative_words.append('system')
+        elif 'pos' not in representative_words and 'pos' in word_counts:
+            representative_words.append('pos')
+        else:
+            break  # If we can't add 'system' or 'pos', we'll stop here
+    
+    return ' '.join(representative_words)
 
 # Title and Instructions
 st.title("Keyword Clustering Tool")
