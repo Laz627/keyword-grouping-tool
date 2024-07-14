@@ -62,15 +62,10 @@ if uploaded_file is not None:
     if not all(col in df.columns for col in required_columns):
         st.error("CSV must contain 'Keywords' column.")
     else:
-        # Optional columns
-        if "Search Volume" not in df.columns:
-            df["Search Volume"] = None
-        if "CPC" not in df.columns:
-            df["CPC"] = None
-        if "Ranked Position" not in df.columns:
-            df["Ranked Position"] = None
-        if "URL" not in df.columns:
-            df["URL"] = None
+        # Ensure optional columns are present
+        for col in ["Search Volume", "CPC", "Ranked Position", "URL"]:
+            if col not in df.columns:
+                df[col] = None
         
         df['Keywords'] = df['Keywords'].astype(str)
 
@@ -124,15 +119,13 @@ if uploaded_file is not None:
                 final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left')
                 
                 # Group and save the results to a CSV file
-                grouping = final_df.groupby(['Cluster']).apply(lambda x: x.to_dict(orient='records')).reset_index()
-                grouped_output = pd.DataFrame({
-                    "Cluster": grouping['Cluster'],
-                    "Keywords": grouping[0].apply(lambda x: " | ".join([kw['Keyword'] for kw in x])),
-                    "Search Volume": grouping[0].apply(lambda x: " | ".join([str(kw['Search Volume']) for kw in x])),
-                    "CPC": grouping[0].apply(lambda x: " | ".join([str(kw['CPC']) for kw in x])),
-                    "Ranked Position": grouping[0].apply(lambda x: " | ".join([str(kw['Ranked Position']) for kw in x])),
-                    "URL": grouping[0].apply(lambda x: " | ".join([str(kw['URL']) for kw in x])),
-                })
+                grouped_output = final_df.groupby('Cluster').agg({
+                    'Keyword': ' | '.join,
+                    'Search Volume': lambda x: ' | '.join([str(v) for v in x]),
+                    'CPC': lambda x: ' | '.join([str(v) for v in x]),
+                    'Ranked Position': lambda x: ' | '.join([str(v) for v in x]),
+                    'URL': ' | '.join
+                }).reset_index()
                 
                 output = io.BytesIO()
                 grouped_output.to_csv(output, index=False)
