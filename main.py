@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import re
-from collections import defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import DBSCAN
 import nltk
@@ -15,13 +14,13 @@ nltk.download('punkt')
 snow_stemmer = SnowballStemmer(language='english')
 
 # Function to stem list of keywords
-def stemmList(list):
-    stemmed_list = []
-    for l in list:
-        words = nltk.word_tokenize(l)
+def stemmList(keywords):
+    stemmed_keywords = []
+    for keyword in keywords:
+        words = nltk.word_tokenize(keyword)
         stem_words = [snow_stemmer.stem(word) for word in words if word.isalnum()]
-        stemmed_list.append(" ".join(stem_words))
-    return stemmed_list
+        stemmed_keywords.append(" ".join(stem_words))
+    return stemmed_keywords
 
 # Title and Instructions
 st.title("Free Keyword Clustering Tool")
@@ -59,11 +58,13 @@ uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
     required_columns = ["Keywords"]
+    optional_columns = ["Search Volume", "CPC", "Ranked Position", "URL"]
+    
     if not all(col in df.columns for col in required_columns):
         st.error("CSV must contain 'Keywords' column.")
     else:
         # Ensure optional columns are present and fill NaN with empty strings
-        for col in ["Search Volume", "CPC", "Ranked Position", "URL"]:
+        for col in optional_columns:
             if col not in df.columns:
                 df[col] = ''
             else:
