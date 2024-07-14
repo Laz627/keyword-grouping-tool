@@ -54,16 +54,21 @@ def get_cluster_name(cluster_keywords, tfidf_vectorizer, tfidf_matrix, cluster_i
     # Extract noun phrases from the cluster keywords
     all_noun_phrases = []
     for keyword in cluster_keywords:
-        all_noun_phrases.extend(extract_noun_phrases(keyword))
+        all_noun_phrases.extend(extract_noun_phrases(keyword.lower()))
     
     # Count the noun phrases
     phrase_counts = Counter(all_noun_phrases)
     
-    # Combine top TF-IDF terms and frequent noun phrases
-    combined_terms = set(top_terms + [phrase for phrase, _ in phrase_counts.most_common(5)])
+    # Combine top TF-IDF terms and frequent noun phrases, ensuring they appear in original keywords
+    combined_terms = []
+    for term in top_terms + [phrase for phrase, _ in phrase_counts.most_common(10)]:
+        if any(term.lower() in keyword.lower() for keyword in cluster_keywords):
+            combined_terms.append(term)
+        if len(combined_terms) == 3:
+            break
     
     # Create cluster name
-    cluster_name = ' '.join(list(combined_terms)[:3])
+    cluster_name = ' '.join(combined_terms)
     return cluster_name
 
 # Title and Instructions
