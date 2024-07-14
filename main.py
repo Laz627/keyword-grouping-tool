@@ -135,6 +135,12 @@ if uploaded_file is not None:
                         if col not in final_df.columns:
                             final_df[col] = ''
                     
+                    # Generate keyword group names based on the first keyword in each cluster
+                    keyword_group_names = final_df.groupby('Cluster')['Keyword'].apply(lambda x: x.iloc[0]).reset_index()
+                    keyword_group_names.columns = ['Cluster', 'Keyword Group Name']
+                    
+                    final_df = pd.merge(final_df, keyword_group_names, on='Cluster')
+                    
                     # Separate rows for each keyword and their attributes
                     output_df = final_df.explode('Keyword')
                     
