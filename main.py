@@ -8,8 +8,10 @@ import nltk
 from nltk.stem.snowball import SnowballStemmer
 import io
 
-# Initialize stemmer
+# Download necessary NLTK data
 nltk.download('punkt')
+
+# Initialize stemmer
 snow_stemmer = SnowballStemmer(language='english')
 
 # Function to stem list of keywords
@@ -100,49 +102,52 @@ if uploaded_file is not None:
         min_clustersize = st.number_input("Minimum Cluster Size", min_value=1, value=2)
 
         if st.button("Classify and Cluster Keywords"):
-            tfidf_vectorizer = TfidfVectorizer(max_df=0.2, max_features=10000, min_df=0.01, stop_words='english', use_idf=True, ngram_range=(1,2))
-            tfidf_matrix = tfidf_vectorizer.fit_transform(textlist)
-            
-            ds = DBSCAN(eps=sensitivity, min_samples=min_clustersize).fit(tfidf_matrix)
-            clusters = ds.labels_.tolist()
-            
-            cluster_df = pd.DataFrame(clusters, columns=['Cluster'])
-            keywords_df = pd.DataFrame(labellist, columns=['Keyword'])
-            result = pd.merge(cluster_df, keywords_df, left_index=True, right_index=True)
-            
-            # Assign remaining keywords to "Miscellaneous"
-            result['Cluster'] = result['Cluster'].apply(lambda x: 'Miscellaneous' if x == -1 else x)
-            
-            # Combine pre-classified and clustered keywords
-            classified_df['Cluster'] = classified_df['Classification']
-            final_df = pd.concat([classified_df, result[['Cluster', 'Keyword']]])
-            
-            # Merge back optional columns
-            final_df = pd.merge(final_df, df.drop(columns=['Classification']), left_on='Keyword', right_on='Keywords', how='left')
-            final_df = final_df.drop(columns=['Keywords'])
-            
-            # Group and save the results to a CSV file
-            grouping = final_df.groupby(['Cluster']).apply(lambda x: x.to_dict(orient='records')).reset_index()
-            grouped_output = pd.DataFrame({
-                "Cluster": grouping['Cluster'],
-                "Keywords": grouping[0].apply(lambda x: " | ".join([kw['Keyword'] for kw in x])),
-                "Search Volume": grouping[0].apply(lambda x: " | ".join([str(kw['Search Volume']) for kw in x])),
-                "CPC": grouping[0].apply(lambda x: " | ".join([str(kw['CPC']) for kw in x])),
-                "Ranked Position": grouping[0].apply(lambda x: " | ".join([str(kw['Ranked Position']) for kw in x])),
-                "URL": grouping[0].apply(lambda x: " | ".join([str(kw['URL']) for kw in x])),
-            })
-            
-            output = io.BytesIO()
-            grouped_output.to_csv(output, index=False)
-            output.seek(0)
-            
-            st.download_button(
-                label="Download Clustered Keywords CSV",
-                data=output,
-                file_name="clustered_keywords.csv",
-                mime="text/csv"
-            )
+            tfidf_vectorizer = TfidfVectorizer(max_df=0.85, max_features=10000, min_df=1, stop_words='english', use_idf=True, ngram_range=(1,2))
+            try:
+                tfidf_matrix = tfidf_vectorizer.fit_transform(textlist)
+                
+                ds = DBSCAN(eps=sensitivity, min_samples=min_clustersize).fit(tfidf_matrix)
+                clusters = ds.labels_.tolist()
+                
+                cluster_df = pd.DataFrame(clusters, columns=['Cluster'])
+                keywords_df = pd.DataFrame(labellist, columns=['Keyword'])
+                result = pd.merge(cluster_df, keywords_df, left_index=True, right_index=True)
+                
+                # Assign remaining keywords to "Miscellaneous"
+                result['Cluster'] = result['Cluster'].apply(lambda x: 'Miscellaneous' if x == -1 else x)
+                
+                # Combine pre-classified and clustered keywords
+                classified_df['Cluster'] = classified_df['Classification']
+                final_df = pd.concat([classified_df, result[['Cluster', 'Keyword']]])
+                
+                # Merge back optional columns
+                final_df = pd.merge(final_df, df.drop(columns=['Classification']), left_on='Keyword', right_on='Keywords', how='left')
+                final_df = final_df.drop(columns=['Keywords'])
+                
+                # Group and save the results to a CSV file
+                grouping = final_df.groupby(['Cluster']).apply(lambda x: x.to_dict(orient='records')).reset_index()
+                grouped_output = pd.DataFrame({
+                    "Cluster": grouping['Cluster'],
+                    "Keywords": grouping[0].apply(lambda x: " | ".join([kw['Keyword'] for kw in x])),
+                    "Search Volume": grouping[0].apply(lambda x: " | ".join([str(kw['Search Volume']) for kw in x])),
+                    "CPC": grouping[0].apply(lambda x: " | ".join([str(kw['CPC']) for kw in x])),
+                    "Ranked Position": grouping[0].apply(lambda x: " | ".join([str(kw['Ranked Position']) for kw in x])),
+                    "URL": grouping[0].apply(lambda x: " | ".join([str(kw['URL']) for kw in x])),
+                })
+                
+                output = io.BytesIO()
+                grouped_output.to_csv(output, index=False)
+                output.seek(0)
+                
+                st.download_button(
+                    label="Download Clustered Keywords CSV",
+                    data=output,
+                    file_name="clustered_keywords.csv",
+                    mime="text/csv"
+                )
 
-            st.dataframe(grouped_output)
+                st.dataframe(grouped_output)
+            except ValueError as e:
+                st.error(f"An error occurred during clustering: {e}")
 
 # To run this app, save the script and run `streamlit run script_name.py`
