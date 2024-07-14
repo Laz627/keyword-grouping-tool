@@ -129,7 +129,7 @@ if uploaded_file is not None:
                     final_df = pd.concat([classified_df, result[['Cluster', 'Keyword']]], ignore_index=True)
                     
                     # Merge back optional columns
-                    final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left')
+                    final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left', suffixes=('', '_original'))
                     
                     # Generate keyword group names based on the first keyword in each cluster
                     keyword_group_names = final_df.groupby('Cluster')['Keyword'].apply(lambda x: x.iloc[0]).reset_index()
@@ -140,8 +140,12 @@ if uploaded_file is not None:
                     # Set Keyword Group Name for Miscellaneous keywords
                     final_df.loc[final_df['Cluster'] == 'Miscellaneous', 'Keyword Group Name'] = 'Miscellaneous'
                     
+                    # Check for the columns in final_df and adjust the final columns accordingly
+                    final_columns = ['Keyword', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Keyword Group Name']
+                    existing_columns = [col for col in final_columns if col in final_df.columns]
+                    
                     # Remove empty rows and redundant columns
-                    final_df = final_df[['Keyword', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Keyword Group Name']].dropna(subset=['Keyword']).reset_index(drop=True)
+                    final_df = final_df[existing_columns].dropna(subset=['Keyword']).reset_index(drop=True)
                     
                     output = io.BytesIO()
                     final_df.to_csv(output, index=False)
@@ -158,5 +162,7 @@ if uploaded_file is not None:
                 except ValueError as e:
                     st.error(f"An error occurred during clustering: {e}")
                     st.text("Make sure your data is properly formatted and contains enough unique terms to cluster.")
+                except KeyError as e:
+                    st.error(f"KeyError: {e}. Please ensure your CSV file has the correct columns.")
 
 # To run this app, save the script and run `streamlit run script_name.py`
