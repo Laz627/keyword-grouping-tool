@@ -129,7 +129,7 @@ if uploaded_file is not None:
                     final_df = pd.concat([classified_df, result[['Cluster', 'Keyword']]], ignore_index=True)
                     
                     # Merge back optional columns
-                    final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left', suffixes=('', '_original'))
+                    final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left')
                     
                     # Generate keyword group names based on the first keyword in each cluster
                     keyword_group_names = final_df.groupby('Cluster')['Keyword'].apply(lambda x: x.iloc[0]).reset_index()
