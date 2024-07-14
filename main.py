@@ -88,59 +88,64 @@ if uploaded_file is not None:
         classified_df = df.dropna(subset=['Classification'])
         unclassified_df = df[df['Classification'].isna()]
 
-        textlist = unclassified_df['Keywords'].to_list()
-        labellist = textlist
-        textlist = stemmList(textlist)
-        
-        # User input for clustering sensitivity
-        sensitivity = st.slider("Select Clustering Sensitivity", min_value=0.01, max_value=1.0, value=0.2, step=0.01)
-        min_clustersize = st.number_input("Minimum Cluster Size", min_value=1, value=2)
+        if unclassified_df.empty:
+            st.warning("All keywords were classified using L1 and L2 classifications. No keywords left for clustering.")
+        else:
+            textlist = unclassified_df['Keywords'].to_list()
+            labellist = textlist
+            textlist = stemmList(textlist)
+            
+            # Check if there are enough unique terms for clustering
+            if len(set(textlist)) < 2:
+                st.error("Not enough unique terms to perform clustering. Please provide more diverse keywords.")
+            else:
+                # User input for clustering sensitivity
+                sensitivity = st.slider("Select Clustering Sensitivity", min_value=0.01, max_value=1.0, value=0.2, step=0.01)
+                min_clustersize = st.number_input("Minimum Cluster Size", min_value=1, value=2)
 
-        if st.button("Classify and Cluster Keywords"):
-            tfidf_vectorizer = TfidfVectorizer(max_df=0.85, max_features=10000, min_df=1, stop_words='english', use_idf=True, ngram_range=(1,2))
-            try:
-                tfidf_matrix = tfidf_vectorizer.fit_transform(textlist)
-                
-                ds = DBSCAN(eps=sensitivity, min_samples=min_clustersize).fit(tfidf_matrix)
-                clusters = ds.labels_.tolist()
-                
-                cluster_df = pd.DataFrame(clusters, columns=['Cluster'])
-                keywords_df = pd.DataFrame(labellist, columns=['Keyword'])
-                result = pd.merge(cluster_df, keywords_df, left_index=True, right_index=True)
-                
-                # Assign remaining keywords to "Miscellaneous"
-                result['Cluster'] = result['Cluster'].apply(lambda x: 'Miscellaneous' if x == -1 else x)
-                
-                # Combine pre-classified and clustered keywords
-                classified_df['Cluster'] = classified_df['Classification']
-                final_df = pd.concat([classified_df, result[['Cluster', 'Keyword']]])
-                
-                # Merge back optional columns
-                final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left')
-                
-                # Group and save the results to a CSV file
-                grouped_output = final_df.groupby('Cluster').agg({
-                    'Keyword': ' | '.join,
-                    'Search Volume': lambda x: ' | '.join([str(v) for v in x]),
-                    'CPC': lambda x: ' | '.join([str(v) for v in x]),
-                    'Ranked Position': lambda x: ' | '.join([str(v) for v in x]),
-                    'URL': ' | '.join
-                }).reset_index()
-                
-                output = io.BytesIO()
-                grouped_output.to_csv(output, index=False)
-                output.seek(0)
-                
-                st.download_button(
-                    label="Download Clustered Keywords CSV",
-                    data=output,
-                    file_name="clustered_keywords.csv",
-                    mime="text/csv"
-                )
+                if st.button("Classify and Cluster Keywords"):
+                    tfidf_vectorizer = TfidfVectorizer(max_df=0.85, max_features=10000, min_df=1, stop_words='english', use_idf=True, ngram_range=(1,2))
+                    try:
+                        tfidf_matrix = tfidf_vectorizer.fit_transform(textlist)
+                        
+                        ds = DBSCAN(eps=sensitivity, min_samples=min_clustersize).fit(tfidf_matrix)
+                        clusters = ds.labels_.tolist()
+                        
+                        cluster_df = pd.DataFrame(clusters, columns=['Cluster'])
+                        keywords_df = pd.DataFrame(labellist, columns=['Keyword'])
+                        result = pd.merge(cluster_df, keywords_df, left_index=True, right_index=True)
+                        
+                        # Assign remaining keywords to "Miscellaneous"
+                        result['Cluster'] = result['Cluster'].apply(lambda x: 'Miscellaneous' if x == -1 else x)
+                        
+                        # Combine pre-classified and clustered keywords
+                        classified_df['Cluster'] = classified_df['Classification']
+                        final_df = pd.concat([classified_df, result[['Cluster', 'Keyword']]])
+                        
+                        # Merge back optional columns
+                        final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left')
+                        
+                        # Group and save the results to a CSV file
+                        grouped_output = final_df.groupby('Cluster').agg({
+                            'Keyword': ' | '.join,
+                            'Search Volume': lambda x: ' | '.join([str(v) for v in x]),
+                            'CPC': lambda x: ' | '.join([str(v) for v in x]),
+                            'Ranked Position': lambda x: ' | '.join([str(v) for v in x]),
+                            'URL': ' | '.join
+                        }).reset_index()
+                        
+                        output = io.BytesIO()
+                        grouped_output.to_csv(output, index=False)
+                        output.seek(0)
+                        
+                        st.download_button(
+                            label="Download Clustered Keywords CSV",
+                            data=output,
+                            file_name="clustered_keywords.csv",
+                            mime="text/csv"
+                        )
 
-                st.dataframe(grouped_output)
-            except ValueError as e:
-                st.error(f"An error occurred during clustering: {e}")
-                st.text("Make sure your data is properly formatted and contains enough unique terms to cluster.")
-
-# To run this app, save the script and run `streamlit run script_name.py`
+                        st.dataframe(grouped_output)
+                    except ValueError as e:
+                        st.error(f"An error occurred during clustering: {e}")
+                        st.text("Make sure your data is properly formatted and contains enough unique terms to cluster.")
