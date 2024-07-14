@@ -132,7 +132,7 @@ if uploaded_file is not None:
             df['Cluster'] = kmeans.fit_predict(X)
 
             # Generate cluster names
-            cluster_names = []
+            cluster_name = get_cluster_name(cluster_keywords, min_words=1, max_words=3)
             for cluster in range(num_clusters):
                 cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
                 cluster_name = get_cluster_name(cluster_keywords)
