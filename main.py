@@ -23,7 +23,7 @@ def preprocess_text(text):
     # Remove stopwords and stem
     return ' '.join([stemmer.stem(word) for word in words if word.isalnum() and word not in stop_words])
 
-def get_cluster_name(cluster_keywords):
+def get_cluster_name(cluster_keywords, min_words=1, max_words=3):
     # Clean and split keywords
     words = [word for keyword in cluster_keywords for word in re.findall(r'\b\w+\b', keyword.lower())]
     
@@ -31,26 +31,32 @@ def get_cluster_name(cluster_keywords):
     word_counts = Counter(words)
     
     # Define words to exclude
-    exclude_words = set(['for', 'what', 'it', 'why', 'how', 'when', 'where', 'which', 'who', 'whom', 'whose', 'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'shall', 'should', 'may', 'might', 'must', 'can', 'could'])
+    exclude_words = set(['for', 'what', 'why', 'how', 'when', 'where', 'it', 'which', 'who', 'whom', 'whose', 'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'shall', 'should', 'may', 'might', 'must', 'can', 'could'])
     
     # Get the most common words, excluding certain words
     common_words = [word for word, count in word_counts.most_common() 
                     if word not in exclude_words and len(word) > 1]
     
     # Function to get the most representative words
-    def get_representative_words(words, n=3):
+    def get_representative_words(words, min_n=min_words, max_n=max_words):
         word_set = set()
         result = []
         for word in words:
-            if len(result) >= n:
+            if len(result) >= max_n:
                 break
             if word not in word_set and not any(word in w or w in word for w in word_set):
                 word_set.add(word)
                 result.append(word)
+            if len(result) >= min_n:
+                # Check if the next word is significantly less common
+                if len(words) > len(result) and word_counts[words[len(result)]] < word_counts[result[-1]] / 2:
+                    break
         return result
     
     # Get the most representative words
     representative_words = get_representative_words(common_words)
+    
+    return ' '.join(representative_words)
     
     # If we don't have enough words, add generic terms
     while len(representative_words) < 3:
