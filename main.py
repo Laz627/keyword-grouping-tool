@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import re
+import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 import nltk
@@ -11,6 +11,7 @@ from collections import Counter
 # Download necessary NLTK data
 nltk.download('punkt')
 nltk.download('stopwords')
+nltk.download('averaged_perceptron_tagger')
 
 # Initialize stemmer and stopwords
 snow_stemmer = SnowballStemmer(language='english')
@@ -24,6 +25,46 @@ def preprocess_keywords(keywords):
         stem_words = [snow_stemmer.stem(word) for word in words if word.isalnum() and word not in stop_words]
         preprocessed_keywords.append(" ".join(stem_words))
     return preprocessed_keywords
+
+# Function to extract noun phrases
+def extract_noun_phrases(text):
+    words = nltk.word_tokenize(text)
+    tagged = nltk.pos_tag(words)
+    noun_phrases = []
+    current_phrase = []
+    for word, tag in tagged:
+        if tag.startswith('NN'):
+            current_phrase.append(word)
+        elif current_phrase:
+            noun_phrases.append(' '.join(current_phrase))
+            current_phrase = []
+    if current_phrase:
+        noun_phrases.append(' '.join(current_phrase))
+    return noun_phrases
+
+# Function to get cluster name
+def get_cluster_name(cluster_keywords, tfidf_vectorizer, tfidf_matrix, cluster_idx):
+    # Get the centroid of the cluster
+    centroid = tfidf_matrix[cluster_idx].mean(axis=0).A1
+    
+    # Get the top 10 terms for this cluster by TF-IDF score
+    top_term_indices = centroid.argsort()[-10:][::-1]
+    top_terms = [tfidf_vectorizer.get_feature_names_out()[i] for i in top_term_indices]
+    
+    # Extract noun phrases from the cluster keywords
+    all_noun_phrases = []
+    for keyword in cluster_keywords:
+        all_noun_phrases.extend(extract_noun_phrases(keyword))
+    
+    # Count the noun phrases
+    phrase_counts = Counter(all_noun_phrases)
+    
+    # Combine top TF-IDF terms and frequent noun phrases
+    combined_terms = set(top_terms + [phrase for phrase, _ in phrase_counts.most_common(5)])
+    
+    # Create cluster name
+    cluster_name = ' '.join(list(combined_terms)[:3])
+    return cluster_name
 
 # Title and Instructions
 st.title("Free Keyword Clustering Tool")
