@@ -135,7 +135,7 @@ if uploaded_file is not None:
             cluster_names = []
             for cluster in range(num_clusters):
                 cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
-                cluster_name = get_cluster_name(cluster_keywords, min_words=1, max_words=4)
+                cluster_name = get_cluster_name(cluster_keywords, min_words=1, max_words=5)
                 cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
         
             cluster_names_df = pd.DataFrame(cluster_names)
