@@ -126,15 +126,10 @@ if uploaded_file is not None:
                     # Combine pre-classified and clustered keywords
                     if not classified_df.empty:
                         classified_df['Cluster'] = classified_df['Classification']
-                    final_df = pd.concat([classified_df, result[['Cluster', 'Keyword']]])
+                    final_df = pd.concat([classified_df, result[['Cluster', 'Keyword']]], ignore_index=True)
                     
                     # Merge back optional columns
-                    final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left')
-                    
-                    # Ensure all columns exist before aggregation
-                    for col in optional_columns:
-                        if col not in final_df.columns:
-                            final_df[col] = ''
+                    final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left', suffixes=('', '_original'))
                     
                     # Generate keyword group names based on the first keyword in each cluster
                     keyword_group_names = final_df.groupby('Cluster')['Keyword'].apply(lambda x: x.iloc[0]).reset_index()
