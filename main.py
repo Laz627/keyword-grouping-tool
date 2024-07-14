@@ -6,8 +6,22 @@ from sklearn.cluster import KMeans
 import nltk
 from nltk.stem import PorterStemmer
 import io
-import re
 from collections import Counter
+import re
+
+# Download necessary NLTK data
+nltk.download('punkt', quiet=True)
+nltk.download('stopwords', quiet=True)
+
+# Initialize stemmer and stopwords
+stemmer = PorterStemmer()
+stop_words = set(nltk.corpus.stopwords.words('english'))
+
+def preprocess_text(text):
+    # Convert to lowercase and tokenize
+    words = nltk.word_tokenize(text.lower())
+    # Remove stopwords and stem
+    return ' '.join([stemmer.stem(word) for word in words if word.isalnum() and word not in stop_words])
 
 def get_cluster_name(cluster_keywords):
     # Clean and split keywords
