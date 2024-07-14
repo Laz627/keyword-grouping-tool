@@ -62,11 +62,12 @@ if uploaded_file is not None:
     if not all(col in df.columns for col in required_columns):
         st.error("CSV must contain 'Keywords' column.")
     else:
-        # Ensure optional columns are present
+        # Ensure optional columns are present and fill NaN with empty strings
         for col in ["Search Volume", "CPC", "Ranked Position", "URL"]:
             if col not in df.columns:
                 df[col] = None
-        
+            df[col] = df[col].fillna('')
+
         df['Keywords'] = df['Keywords'].astype(str)
 
         # User input for L1 and L2 classifications
@@ -127,6 +128,11 @@ if uploaded_file is not None:
                     
                     # Merge back optional columns
                     final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left')
+                    
+                    # Ensure all columns exist before aggregation
+                    for col in ["Search Volume", "CPC", "Ranked Position", "URL"]:
+                        if col not in final_df.columns:
+                            final_df[col] = ''
                     
                     # Group and save the results to a CSV file
                     grouped_output = final_df.groupby('Cluster').agg({
