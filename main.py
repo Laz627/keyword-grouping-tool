@@ -30,10 +30,22 @@ def get_cluster_name(cluster_keywords):
     # Count word frequencies
     word_counts = Counter(words)
     
-    # Get the top 3 most common words
-    top_words = [word for word, count in word_counts.most_common(3)]
+    # Get the most common words
+    common_words = [word for word, count in word_counts.most_common(10)]
     
-    return ' '.join(top_words)
+    # Function to check if a word is too similar to already selected words
+    def is_too_similar(word, selected_words):
+        return any(word.startswith(w) or w.startswith(word) for w in selected_words)
+    
+    # Select diverse words for the cluster name
+    selected_words = []
+    for word in common_words:
+        if len(selected_words) >= 3:
+            break
+        if not is_too_similar(word, selected_words):
+            selected_words.append(word)
+    
+    return ' '.join(selected_words)
 
 # Title and Instructions
 st.title("Keyword Clustering Tool")
