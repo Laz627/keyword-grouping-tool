@@ -19,7 +19,7 @@ def stemmList(list):
     stemmed_list = []
     for l in list:
         words = nltk.word_tokenize(l)
-        stem_words = [snow_stemmer.stem(word) for word in words]
+        stem_words = [snow_stemmer.stem(word) for word in words if word.isalnum()]
         stemmed_list.append(" ".join(stem_words))
     return stemmed_list
 
@@ -149,5 +149,6 @@ if uploaded_file is not None:
                 st.dataframe(grouped_output)
             except ValueError as e:
                 st.error(f"An error occurred during clustering: {e}")
+                st.text("Make sure your data is properly formatted and contains enough unique terms to cluster.")
 
 # To run this app, save the script and run `streamlit run script_name.py`
