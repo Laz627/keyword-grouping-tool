@@ -123,42 +123,42 @@ if uploaded_file is not None:
         num_clusters = st.slider("Select Number of Clusters", min_value=2, max_value=50, value=10, step=1)
 
         if st.button("Classify and Cluster Keywords"):
-    # Vectorize the processed keywords
-    vectorizer = TfidfVectorizer()
-    X = vectorizer.fit_transform(df['Processed_Keywords'])
-
-    # Perform clustering
-    kmeans = KMeans(n_clusters=num_clusters, random_state=42)
-    df['Cluster'] = kmeans.fit_predict(X)
-
-    # Generate cluster names
-    cluster_names = []
-    for cluster in range(num_clusters):
-        cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
-        cluster_name = get_cluster_name(cluster_keywords, min_words=1, max_words=3)
-        cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
-
-    cluster_names_df = pd.DataFrame(cluster_names)
-    
-    # Merge cluster names with main dataframe
-    final_df = pd.merge(df, cluster_names_df, on='Cluster', how='left')
-    
-    # Select and order the final columns
-    final_columns = ['Keywords', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Cluster Name']
-    final_df = final_df[final_columns]
-
-    # Prepare CSV for download
-    output = io.BytesIO()
-    final_df.to_csv(output, index=False)
-    output.seek(0)
-    
-    st.download_button(
-        label="Download Clustered Keywords CSV",
-        data=output,
-        file_name="clustered_keywords.csv",
-        mime="text/csv"
-    )
-
-    st.dataframe(final_df)
+            # Vectorize the processed keywords
+            vectorizer = TfidfVectorizer()
+            X = vectorizer.fit_transform(df['Processed_Keywords'])
+        
+            # Perform clustering
+            kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+            df['Cluster'] = kmeans.fit_predict(X)
+        
+            # Generate cluster names
+            cluster_names = []
+            for cluster in range(num_clusters):
+                cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
+                cluster_name = get_cluster_name(cluster_keywords, min_words=1, max_words=3)
+                cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
+        
+            cluster_names_df = pd.DataFrame(cluster_names)
+            
+            # Merge cluster names with main dataframe
+            final_df = pd.merge(df, cluster_names_df, on='Cluster', how='left')
+            
+            # Select and order the final columns
+            final_columns = ['Keywords', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Cluster Name']
+            final_df = final_df[final_columns]
+        
+            # Prepare CSV for download
+            output = io.BytesIO()
+            final_df.to_csv(output, index=False)
+            output.seek(0)
+            
+            st.download_button(
+                label="Download Clustered Keywords CSV",
+                data=output,
+                file_name="clustered_keywords.csv",
+                mime="text/csv"
+            )
+        
+            st.dataframe(final_df)
 
 # Run this app with: streamlit run script_name.py
