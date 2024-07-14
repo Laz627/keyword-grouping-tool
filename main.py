@@ -122,7 +122,6 @@ if uploaded_file is not None:
                 
                 # Merge back optional columns
                 final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left')
-                final_df = final_df.drop(columns=['Keywords'])
                 
                 # Group and save the results to a CSV file
                 grouping = final_df.groupby(['Cluster']).apply(lambda x: x.to_dict(orient='records')).reset_index()
