@@ -31,7 +31,7 @@ def get_cluster_name(cluster_keywords):
     word_counts = Counter(words)
     
     # Define words to exclude
-    exclude_words = set(['for', 'what', 'why', 'how', 'when', 'where', 'which', 'who', 'whom', 'whose', 'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of'])
+    exclude_words = set(['for', 'what', 'why', 'how', 'when', 'where', 'which', 'who', 'whom', 'whose', 'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of', 'is'])
     
     # Get the most common words, excluding certain words
     common_words = [word for word, count in word_counts.most_common(20) if word not in exclude_words and len(word) > 1]
