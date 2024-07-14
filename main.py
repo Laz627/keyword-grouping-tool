@@ -25,16 +25,22 @@ def preprocess_text(text):
 
 def get_cluster_name(cluster_keywords):
     # Clean and split keywords
-    words = [word for keyword in cluster_keywords for word in keyword.lower().split()]
+    words = [word for keyword in cluster_keywords for word in re.findall(r'\b\w+\b', keyword.lower())]
     
     # Count word frequencies
     word_counts = Counter(words)
     
     # Define words to exclude
-    exclude_words = set(['for', 'what', 'why', 'how', 'when', 'where', 'which', 'who', 'whom', 'whose', 'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of', 'is'])
+    exclude_words = set(['for', 'what', 'why', 'how', 'when', 'where', 'which', 'who', 'whom', 'whose', 'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'shall', 'should', 'may', 'might', 'must', 'can', 'could'])
     
-    # Get the most common words, excluding certain words
-    common_words = [word for word, count in word_counts.most_common(20) if word not in exclude_words and len(word) > 1]
+    # Calculate the threshold for considering a word (e.g., must appear in at least 10% of keywords)
+    threshold = max(2, len(cluster_keywords) * 0.1)
+    
+    # Get the most common words, excluding certain words and applying the threshold
+    common_words = [word for word, count in word_counts.most_common() 
+                    if word not in exclude_words 
+                    and len(word) > 1 
+                    and count >= threshold]
     
     # Function to check if a word is too similar to already selected words
     def is_too_similar(word, selected_words):
@@ -50,11 +56,17 @@ def get_cluster_name(cluster_keywords):
     
     # If we don't have 3 words, add the most common excluded words
     if len(selected_words) < 3:
-        for word in [w for w, _ in word_counts.most_common() if w in exclude_words]:
+        for word in [w for w, c in word_counts.most_common() if w in exclude_words and c >= threshold]:
             if len(selected_words) >= 3:
                 break
             if word not in selected_words:
                 selected_words.append(word)
+    
+    # If we still don't have 3 words, add the next most common words
+    while len(selected_words) < 3 and common_words:
+        word = common_words.pop(0)
+        if word not in selected_words:
+            selected_words.append(word)
     
     return ' '.join(selected_words)
 
