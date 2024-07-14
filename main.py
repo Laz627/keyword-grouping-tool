@@ -120,7 +120,7 @@ if uploaded_file is not None:
         df['Processed_Keywords'] = df['Keywords'].apply(preprocess_text)
 
         # User input for number of clusters
-        num_clusters = st.slider("Select Number of Clusters", min_value=2, max_value=100, value=10, step=1)
+        num_clusters = st.slider("Select Number of Clusters", min_value=2, max_value=150, value=10, step=1)
 
         if st.button("Classify and Cluster Keywords"):
             # Vectorize the processed keywords
