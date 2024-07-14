@@ -92,7 +92,7 @@ if uploaded_file is not None:
             unclassified_df = df[df['Classification'].isna()]
         else:
             df['Classification'] = None
-            classified_df = df[[]]  # Empty DataFrame with the same columns
+            classified_df = pd.DataFrame(columns=df.columns)  # Empty DataFrame with the same columns
             unclassified_df = df
         
         textlist = unclassified_df['Keywords'].to_list()
@@ -144,11 +144,11 @@ if uploaded_file is not None:
                     # Set Keyword Group Name for Miscellaneous keywords
                     final_df.loc[final_df['Cluster'] == 'Miscellaneous', 'Keyword Group Name'] = 'Miscellaneous'
                     
-                    # Output the DataFrame with keywords in separate rows
-                    output_df = final_df
+                    # Remove empty rows
+                    final_df = final_df.dropna(subset=['Cluster', 'Keyword']).reset_index(drop=True)
                     
                     output = io.BytesIO()
-                    output_df.to_csv(output, index=False)
+                    final_df.to_csv(output, index=False)
                     output.seek(0)
                     
                     st.download_button(
@@ -158,7 +158,7 @@ if uploaded_file is not None:
                         mime="text/csv"
                     )
 
-                    st.dataframe(output_df)
+                    st.dataframe(final_df)
                 except ValueError as e:
                     st.error(f"An error occurred during clustering: {e}")
                     st.text("Make sure your data is properly formatted and contains enough unique terms to cluster.")
