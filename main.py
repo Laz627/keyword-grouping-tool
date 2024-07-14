@@ -108,61 +108,74 @@ if uploaded_file is not None:
             sensitivity = st.slider("Select Clustering Sensitivity", min_value=0.01, max_value=1.0, value=0.2, step=0.01)
             min_clustersize = st.number_input("Minimum Cluster Size", min_value=1, value=2)
 
-            if st.button("Classify and Cluster Keywords"):
-                tfidf_vectorizer = TfidfVectorizer(max_df=0.85, max_features=10000, min_df=1, stop_words='english', use_idf=True, ngram_range=(1,2))
-                try:
-                    tfidf_matrix = tfidf_vectorizer.fit_transform(textlist)
-                    
-                    ds = DBSCAN(eps=sensitivity, min_samples=min_clustersize).fit(tfidf_matrix)
-                    clusters = ds.labels_.tolist()
-                    
-                    cluster_df = pd.DataFrame(clusters, columns=['Cluster'])
-                    keywords_df = pd.DataFrame(labellist, columns=['Keyword'])
-                    result = pd.merge(cluster_df, keywords_df, left_index=True, right_index=True)
-                    
-                    # Assign remaining keywords to "Miscellaneous"
-                    result['Cluster'] = result['Cluster'].apply(lambda x: 'Miscellaneous' if x == -1 else x)
-                    
-                    # Combine pre-classified and clustered keywords
-                    if not classified_df.empty:
-                        classified_df['Cluster'] = classified_df['Classification']
-                    final_df = pd.concat([classified_df, result[['Cluster', 'Keyword']]], ignore_index=True)
-                    
-                    # Merge back optional columns
-                    final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left')
-                    
-                    # Generate keyword group names based on the first keyword in each cluster
-                    keyword_group_names = final_df.groupby('Cluster')['Keyword'].apply(lambda x: x.iloc[0]).reset_index()
-                    keyword_group_names.columns = ['Cluster', 'Keyword Group Name']
-                    
-                    final_df = pd.merge(final_df, keyword_group_names, on='Cluster', how='left')
-                    
-                    # Set Keyword Group Name for Miscellaneous keywords
-                    final_df.loc[final_df['Cluster'] == 'Miscellaneous', 'Keyword Group Name'] = 'Miscellaneous'
-                    
-                    # Check for the columns in final_df and adjust the final columns accordingly
-                    final_columns = ['Keyword', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Keyword Group Name']
-                    existing_columns = [col for col in final_columns if col in final_df.columns]
-                    
-                    # Remove empty rows and redundant columns
-                    final_df = final_df[existing_columns].dropna(subset=['Keyword']).reset_index(drop=True)
-                    
-                    output = io.BytesIO()
-                    final_df.to_csv(output, index=False)
-                    output.seek(0)
-                    
-                    st.download_button(
-                        label="Download Clustered Keywords CSV",
-                        data=output,
-                        file_name="clustered_keywords.csv",
-                        mime="text/csv"
-                    )
+            # ... (previous code remains the same)
 
-                    st.dataframe(final_df)
-                except ValueError as e:
-                    st.error(f"An error occurred during clustering: {e}")
-                    st.text("Make sure your data is properly formatted and contains enough unique terms to cluster.")
-                except KeyError as e:
-                    st.error(f"KeyError: {e}. Please ensure your CSV file has the correct columns.")
+if st.button("Classify and Cluster Keywords"):
+    tfidf_vectorizer = TfidfVectorizer(max_df=0.85, max_features=10000, min_df=1, stop_words='english', use_idf=True, ngram_range=(1,2))
+    try:
+        tfidf_matrix = tfidf_vectorizer.fit_transform(textlist)
+        
+        ds = DBSCAN(eps=sensitivity, min_samples=min_clustersize).fit(tfidf_matrix)
+        clusters = ds.labels_.tolist()
+        
+        cluster_df = pd.DataFrame(clusters, columns=['Cluster'])
+        keywords_df = pd.DataFrame(labellist, columns=['Keyword'])
+        result = pd.merge(cluster_df, keywords_df, left_index=True, right_index=True)
+        
+        # Assign remaining keywords to "Miscellaneous"
+        result['Cluster'] = result['Cluster'].apply(lambda x: 'Miscellaneous' if x == -1 else x)
+        
+        # Combine pre-classified and clustered keywords
+        if not classified_df.empty:
+            classified_df['Cluster'] = classified_df['Classification']
+            final_df = pd.concat([classified_df, result], ignore_index=True)
+        else:
+            final_df = result
+        
+        # Merge back optional columns
+        final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left')
+        
+        # Generate keyword group names based on the first keyword in each cluster
+        keyword_group_names = final_df.groupby('Cluster')['Keyword'].apply(lambda x: x.iloc[0]).reset_index()
+        keyword_group_names.columns = ['Cluster', 'Keyword Group Name']
+        
+        final_df = pd.merge(final_df, keyword_group_names, on='Cluster', how='left')
+        
+        # Set Keyword Group Name for Miscellaneous keywords
+        final_df.loc[final_df['Cluster'] == 'Miscellaneous', 'Keyword Group Name'] = 'Miscellaneous'
+        
+        # Define the final columns order
+        final_columns = ['Keyword', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Keyword Group Name']
+        
+        # Ensure all required columns are present
+        for col in final_columns:
+            if col not in final_df.columns:
+                final_df[col] = None
+        
+        # Select and order the final columns
+        final_df = final_df[final_columns]
+        
+        # Remove empty rows
+        final_df = final_df.dropna(subset=['Keyword']).reset_index(drop=True)
+        
+        output = io.BytesIO()
+        final_df.to_csv(output, index=False)
+        output.seek(0)
+        
+        st.download_button(
+            label="Download Clustered Keywords CSV",
+            data=output,
+            file_name="clustered_keywords.csv",
+            mime="text/csv"
+        )
 
-# To run this app, save the script and run `streamlit run script_name.py`
+        st.dataframe(final_df)
+    except ValueError as e:
+        st.error(f"An error occurred during clustering: {e}")
+        st.text("Make sure your data is properly formatted and contains enough unique terms to cluster.")
+    except KeyError as e:
+        st.error(f"KeyError: {e}. Please ensure your CSV file has the correct columns.")
+
+# ... (remaining code stays the same)
+
+# To run this app, save the script and run streamlit run script_name.py
