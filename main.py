@@ -125,64 +125,67 @@ if uploaded_file is not None:
             # User input for number of clusters
             num_clusters = st.slider("Select Number of Clusters", min_value=2, max_value=50, value=10, step=1)
 
-            if st.button("Classify and Cluster Keywords"):
-                tfidf_vectorizer = TfidfVectorizer(max_df=0.85, max_features=10000, min_df=1, stop_words='english', use_idf=True, ngram_range=(1,3))
-                try:
-                    tfidf_matrix = tfidf_vectorizer.fit_transform(preprocessed_textlist)
-                    
-                    kmeans = KMeans(n_clusters=num_clusters, random_state=42)
-                    kmeans.fit(tfidf_matrix)
-                    clusters = kmeans.labels_.tolist()
-                    
-                    cluster_df = pd.DataFrame(clusters, columns=['Cluster'])
-                    keywords_df = pd.DataFrame(textlist, columns=['Keyword'])
-                    result = pd.concat([cluster_df, keywords_df], axis=1)
-                    
-                    # Generate cluster names based on most common words
-                    def get_cluster_name(cluster_keywords):
-                        words = ' '.join(cluster_keywords).split()
-                        word_counts = Counter(words)
-                        top_words = [word for word, _ in word_counts.most_common(3)]
-                        return ' '.join(top_words)
+            # ... (previous code remains the same)
 
-                    cluster_names = result.groupby('Cluster')['Keyword'].apply(get_cluster_name).reset_index()
-                    cluster_names.columns = ['Cluster', 'Cluster Name']
-                    
-                    final_df = pd.merge(result, cluster_names, on='Cluster', how='left')
-                    
-                    # Merge back optional columns
-                    final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left')
-                    
-                    # Define the final columns order
-                    final_columns = ['Keyword', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Cluster Name']
-                    
-                    # Ensure all required columns are present
-                    for col in final_columns:
-                        if col not in final_df.columns:
-                            final_df[col] = None
-                    
-                    # Select and order the final columns
-                    final_df = final_df[final_columns]
-                    
-                    # Remove empty rows
-                    final_df = final_df.dropna(subset=['Keyword']).reset_index(drop=True)
-                    
-                    output = io.BytesIO()
-                    final_df.to_csv(output, index=False)
-                    output.seek(0)
-                    
-                    st.download_button(
-                        label="Download Clustered Keywords CSV",
-                        data=output,
-                        file_name="clustered_keywords.csv",
-                        mime="text/csv"
-                    )
+if st.button("Classify and Cluster Keywords"):
+    tfidf_vectorizer = TfidfVectorizer(max_df=0.85, max_features=10000, min_df=1, stop_words='english', use_idf=True, ngram_range=(1,3))
+    try:
+        tfidf_matrix = tfidf_vectorizer.fit_transform(preprocessed_textlist)
+        
+        kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+        kmeans.fit(tfidf_matrix)
+        clusters = kmeans.labels_.tolist()
+        
+        cluster_df = pd.DataFrame(clusters, columns=['Cluster'])
+        keywords_df = pd.DataFrame(textlist, columns=['Keyword'])
+        result = pd.concat([cluster_df, keywords_df], axis=1)
+        
+        # Generate cluster names
+        cluster_names = []
+        for cluster in range(num_clusters):
+            cluster_keywords = result[result['Cluster'] == cluster]['Keyword'].tolist()
+            cluster_name = get_cluster_name(cluster_keywords, tfidf_vectorizer, tfidf_matrix, cluster)
+            cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
+        
+        cluster_names_df = pd.DataFrame(cluster_names)
+        
+        final_df = pd.merge(result, cluster_names_df, on='Cluster', how='left')
+        
+        # Merge back optional columns
+        final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left')
+        
+        # Define the final columns order
+        final_columns = ['Keyword', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Cluster Name']
+        
+        # Ensure all required columns are present
+        for col in final_columns:
+            if col not in final_df.columns:
+                final_df[col] = None
+        
+        # Select and order the final columns
+        final_df = final_df[final_columns]
+        
+        # Remove empty rows
+        final_df = final_df.dropna(subset=['Keyword']).reset_index(drop=True)
+        
+        output = io.BytesIO()
+        final_df.to_csv(output, index=False)
+        output.seek(0)
+        
+        st.download_button(
+            label="Download Clustered Keywords CSV",
+            data=output,
+            file_name="clustered_keywords.csv",
+            mime="text/csv"
+        )
 
-                    st.dataframe(final_df)
-                except ValueError as e:
-                    st.error(f"An error occurred during clustering: {e}")
-                    st.text("Make sure your data is properly formatted and contains enough unique terms to cluster.")
-                except KeyError as e:
-                    st.error(f"KeyError: {e}. Please ensure your CSV file has the correct columns.")
+        st.dataframe(final_df)
+    except ValueError as e:
+        st.error(f"An error occurred during clustering: {e}")
+        st.text("Make sure your data is properly formatted and contains enough unique terms to cluster.")
+    except KeyError as e:
+        st.error(f"KeyError: {e}. Please ensure your CSV file has the correct columns.")
+
+# ... (rest of the code remains the same)
 
 # To run this app, save the script and run streamlit run script_name.py
