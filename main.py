@@ -8,6 +8,47 @@ from nltk.stem.snowball import SnowballStemmer
 import io
 from collections import Counter
 
+from collections import Counter
+import re
+
+def clean_keyword(keyword):
+    # Remove special characters and convert to lowercase
+    return re.sub(r'[^a-zA-Z0-9\s]', '', keyword.lower())
+
+def get_cluster_name(cluster_keywords):
+    # Clean and split keywords
+    words = [word for keyword in cluster_keywords for word in clean_keyword(keyword).split()]
+    
+    # Count word frequencies
+    word_counts = Counter(words)
+    
+    # Remove very common words that aren't specific to the cluster
+    common_words = {'pos', 'system', 'systems'}
+    for word in common_words:
+        word_counts.pop(word, None)
+    
+    # Get the top 3 most common words
+    top_words = [word for word, count in word_counts.most_common(3)]
+    
+    # If we don't have 3 words, add back 'pos' and/or 'system'
+    while len(top_words) < 3 and common_words:
+        top_words.append(common_words.pop())
+    
+    return ' '.join(top_words)
+
+# In the main clustering code:
+if st.button("Classify and Cluster Keywords"):
+    # ... (previous code for TF-IDF and clustering remains the same)
+    
+    # Generate cluster names
+    cluster_names = []
+    for cluster in range(num_clusters):
+        cluster_keywords = result[result['Cluster'] == cluster]['Keyword'].tolist()
+        cluster_name = get_cluster_name(cluster_keywords)
+        cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
+    
+    # ... (rest of the code remains the same)
+
 # Download necessary NLTK data
 nltk.download('punkt')
 nltk.download('stopwords')
