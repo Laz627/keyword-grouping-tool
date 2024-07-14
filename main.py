@@ -27,7 +27,7 @@ def stemmList(list):
 st.title("Free Keyword Clustering Tool")
 st.markdown("""
     **Instructions:**
-    1. Upload a CSV file with your keywords and optional fields (Search Volume, CPC, Ranked Position, URL) in the first column.
+    1. Upload a CSV file with your keywords and optional fields (Search Volume, CPC, Ranked Position, URL).
     2. Enter L1 and L2 classifications to help reduce "miscellaneous" keywords.
     3. Adjust the sensitivity for clustering.
     4. The tool will classify and cluster the keywords, and generate a downloadable CSV file with the results.
@@ -121,7 +121,7 @@ if uploaded_file is not None:
                 final_df = pd.concat([classified_df, result[['Cluster', 'Keyword']]])
                 
                 # Merge back optional columns
-                final_df = pd.merge(final_df, df.drop(columns=['Classification']), left_on='Keyword', right_on='Keywords', how='left')
+                final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left')
                 final_df = final_df.drop(columns=['Keywords'])
                 
                 # Group and save the results to a CSV file
