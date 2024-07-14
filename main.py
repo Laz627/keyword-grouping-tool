@@ -74,7 +74,7 @@ st.title("Keyword Clustering Tool")
 st.markdown("""
     **Instructions:**
     1. Upload a CSV file with your keywords and optional fields (Search Volume, CPC, Ranked Position, URL).
-    2. Adjust the number of clusters for categorization.
+    2. Adjust the number of clusters for categorization. The higher your clustering number, the more specific the clusters will be, which can make categorization less meaningful as granularity increases.
     3. The tool will classify and cluster the keywords, and generate a downloadable CSV file with the results.
 """)
 
