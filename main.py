@@ -139,10 +139,13 @@ if uploaded_file is not None:
                     keyword_group_names = final_df.groupby('Cluster')['Keyword'].apply(lambda x: x.iloc[0]).reset_index()
                     keyword_group_names.columns = ['Cluster', 'Keyword Group Name']
                     
-                    final_df = pd.merge(final_df, keyword_group_names, on='Cluster')
+                    final_df = pd.merge(final_df, keyword_group_names, on='Cluster', how='left')
                     
-                    # Separate rows for each keyword and their attributes
-                    output_df = final_df.explode('Keyword')
+                    # Set Keyword Group Name for Miscellaneous keywords
+                    final_df.loc[final_df['Cluster'] == 'Miscellaneous', 'Keyword Group Name'] = 'Miscellaneous'
+                    
+                    # Output the DataFrame with keywords in separate rows
+                    output_df = final_df
                     
                     output = io.BytesIO()
                     output_df.to_csv(output, index=False)
