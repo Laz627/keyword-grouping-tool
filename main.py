@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans, AgglomerativeClustering
+from sklearn.cluster import KMeans
 import nltk
 from nltk.stem import PorterStemmer
 import io
@@ -58,6 +58,35 @@ def get_cluster_name(cluster_keywords, min_words=1, max_words=3):
     
     return ' '.join(representative_words)
 
+def get_sub_cluster_name(sub_cluster_keywords, main_cluster_name, min_words=1, max_words=3):
+    main_cluster_words = set(main_cluster_name.split())
+    words = [word for keyword in sub_cluster_keywords for word in re.findall(r'\b\w+\b', keyword.lower()) if word not in main_cluster_words]
+    
+    word_counts = Counter(words)
+    
+    exclude_words = set(['for', 'what', 'why', 'how', 'when', 'where', 'it', 'which', 'who', 'whom', 'whose', 'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'shall', 'should', 'may', 'might', 'must', 'can', 'could', 'that'])
+    
+    common_words = [word for word, count in word_counts.most_common() 
+                    if word not in exclude_words and len(word) > 1]
+    
+    def get_representative_words(words, min_n=min_words, max_n=max_words):
+        word_set = set()
+        result = []
+        for word in words:
+            if len(result) >= max_n:
+                break
+            if word not in word_set and not any(word in w or w in word for w in word_set):
+                word_set.add(word)
+                result.append(word)
+            if len(result) >= min_n:
+                if len(words) > len(result) and word_counts[words[len(result)]] < word_counts[result[-1]] / 2:
+                    break
+        return result
+    
+    representative_words = get_representative_words(common_words)
+    
+    return ' '.join(representative_words) if representative_words else 'Other'
+
 # Title and Instructions
 st.title("Keyword Clustering Tool")
 st.markdown("""
@@ -105,6 +134,9 @@ if uploaded_file is not None:
         
         df['Keywords'] = df['Keywords'].astype(str)
 
+        # Remove duplicates
+        df = df.drop_duplicates(subset=['Keywords'])
+
         # Preprocess keywords
         df['Processed_Keywords'] = df['Keywords'].apply(preprocess_text)
 
@@ -127,7 +159,8 @@ if uploaded_file is not None:
                 cluster_X = X[cluster_mask]
                 
                 if cluster_X.shape[0] > 1:  # Only sub-cluster if there's more than one item
-                    sub_kmeans = AgglomerativeClustering(n_clusters=None, distance_threshold=0.5)
+                    n_subclusters = min(int(np.sqrt(cluster_X.shape[0])), 5)  # Limit number of subclusters
+                    sub_kmeans = KMeans(n_clusters=n_subclusters, random_state=42)
                     sub_cluster_labels = sub_kmeans.fit_predict(cluster_X.toarray())
                     sub_clusters.extend([f"{cluster}.{label}" for label in sub_cluster_labels])
                 else:
@@ -147,7 +180,7 @@ if uploaded_file is not None:
                 sub_cluster_ids = df[df['Main_Cluster'] == cluster]['Sub_Cluster'].unique()
                 for sub_cluster in sub_cluster_ids:
                     sub_cluster_keywords = df[df['Sub_Cluster'] == sub_cluster]['Keywords'].tolist()
-                    sub_cluster_name = get_cluster_name(sub_cluster_keywords, min_words=1, max_words=3)
+                    sub_cluster_name = get_sub_cluster_name(sub_cluster_keywords, main_cluster_name, min_words=1, max_words=3)
                     sub_cluster_names.append({'Sub_Cluster': sub_cluster, 'Sub_Cluster_Name': sub_cluster_name})
 
             main_cluster_names_df = pd.DataFrame(main_cluster_names)
