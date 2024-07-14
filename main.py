@@ -132,7 +132,7 @@ if uploaded_file is not None:
                     final_df = pd.merge(final_df, df, left_on='Keyword', right_on='Keywords', how='left')
                     
                     # Ensure all columns exist before aggregation
-                    for col in ["Search Volume", "CPC", "Ranked Position", "URL"]:
+                    for col in optional_columns:
                         if col not in final_df.columns:
                             final_df[col] = ''
                     
