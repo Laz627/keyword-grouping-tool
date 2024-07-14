@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, AgglomerativeClustering
 import nltk
 from nltk.stem import PorterStemmer
 import io
@@ -57,17 +57,6 @@ def get_cluster_name(cluster_keywords, min_words=1, max_words=3):
     representative_words = get_representative_words(common_words)
     
     return ' '.join(representative_words)
-    
-    # If we don't have enough words, add generic terms
-    while len(representative_words) < 3:
-        if 'system' not in representative_words and 'system' in word_counts:
-            representative_words.append('system')
-        elif 'pos' not in representative_words and 'pos' in word_counts:
-            representative_words.append('pos')
-        else:
-            break  # If we can't add 'system' or 'pos', we'll stop here
-    
-    return ' '.join(representative_words)
 
 # Title and Instructions
 st.title("Keyword Clustering Tool")
@@ -120,33 +109,58 @@ if uploaded_file is not None:
         df['Processed_Keywords'] = df['Keywords'].apply(preprocess_text)
 
         # User input for number of clusters
-        num_clusters = st.slider("Select Number of Clusters", min_value=2, max_value=50, value=10, step=1)
+        num_clusters = st.slider("Select Number of Main Clusters", min_value=2, max_value=50, value=10, step=1)
 
         if st.button("Classify and Cluster Keywords"):
             # Vectorize the processed keywords
             vectorizer = TfidfVectorizer()
             X = vectorizer.fit_transform(df['Processed_Keywords'])
-        
-            # Perform clustering
+
+            # First-level clustering
             kmeans = KMeans(n_clusters=num_clusters, random_state=42)
-            df['Cluster'] = kmeans.fit_predict(X)
-        
-            # Generate cluster names
-            cluster_names = []
+            df['Main_Cluster'] = kmeans.fit_predict(X)
+
+            # Second-level clustering
+            sub_clusters = []
             for cluster in range(num_clusters):
-                cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
-                cluster_name = get_cluster_name(cluster_keywords, min_words=1, max_words=3)
-                cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
-        
-            cluster_names_df = pd.DataFrame(cluster_names)
-            
+                cluster_mask = df['Main_Cluster'] == cluster
+                cluster_X = X[cluster_mask]
+                
+                if cluster_X.shape[0] > 1:  # Only sub-cluster if there's more than one item
+                    sub_kmeans = AgglomerativeClustering(n_clusters=None, distance_threshold=0.5)
+                    sub_cluster_labels = sub_kmeans.fit_predict(cluster_X.toarray())
+                    sub_clusters.extend([f"{cluster}.{label}" for label in sub_cluster_labels])
+                else:
+                    sub_clusters.extend([f"{cluster}.0"])
+
+            df['Sub_Cluster'] = sub_clusters
+
+            # Generate cluster names for both levels
+            main_cluster_names = []
+            sub_cluster_names = []
+
+            for cluster in range(num_clusters):
+                main_cluster_keywords = df[df['Main_Cluster'] == cluster]['Keywords'].tolist()
+                main_cluster_name = get_cluster_name(main_cluster_keywords, min_words=1, max_words=3)
+                main_cluster_names.append({'Main_Cluster': cluster, 'Main_Cluster_Name': main_cluster_name})
+
+                sub_cluster_ids = df[df['Main_Cluster'] == cluster]['Sub_Cluster'].unique()
+                for sub_cluster in sub_cluster_ids:
+                    sub_cluster_keywords = df[df['Sub_Cluster'] == sub_cluster]['Keywords'].tolist()
+                    sub_cluster_name = get_cluster_name(sub_cluster_keywords, min_words=1, max_words=3)
+                    sub_cluster_names.append({'Sub_Cluster': sub_cluster, 'Sub_Cluster_Name': sub_cluster_name})
+
+            main_cluster_names_df = pd.DataFrame(main_cluster_names)
+            sub_cluster_names_df = pd.DataFrame(sub_cluster_names)
+
             # Merge cluster names with main dataframe
-            final_df = pd.merge(df, cluster_names_df, on='Cluster', how='left')
-            
+            final_df = pd.merge(df, main_cluster_names_df, on='Main_Cluster', how='left')
+            final_df = pd.merge(final_df, sub_cluster_names_df, on='Sub_Cluster', how='left')
+
             # Select and order the final columns
-            final_columns = ['Keywords', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Cluster Name']
+            final_columns = ['Keywords', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Main_Cluster', 'Main_Cluster_Name', 'Sub_Cluster', 'Sub_Cluster_Name']
             final_df = final_df[final_columns]
-        
+
             # Prepare CSV for download
             output = io.BytesIO()
             final_df.to_csv(output, index=False)
