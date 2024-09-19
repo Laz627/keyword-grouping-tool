@@ -8,7 +8,8 @@ from nltk.stem import PorterStemmer
 import io
 from collections import Counter
 import re
-import shutil
+import os
+import shutil  # Ensure this import is at the top
 
 # Path to NLTK data directory
 nltk_data_dir = os.path.join(os.getcwd(), 'nltk_data')
@@ -29,7 +30,7 @@ nltk.download('stopwords', download_dir=nltk_data_dir, quiet=True)
 nltk.data.path.append(nltk_data_dir)
 
 # Initialize stemmer and stopwords
-stemmer = nltk.stem.PorterStemmer()
+stemmer = PorterStemmer()
 stop_words = set(nltk.corpus.stopwords.words('english'))
 
 def preprocess_text(text):
