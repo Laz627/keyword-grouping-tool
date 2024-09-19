@@ -63,6 +63,7 @@ def refine_cluster_name(cluster_name, keywords):
     - Use exact or partial matches of words from the keywords to maintain relevance.
     - Do not use words that weren't found in the keyword cluster group.
     - Only include the cluster name as part of the output.
+    - Keep it more broad / generic, 3-4 words.
     
     Suggested Cluster Name:
     """
