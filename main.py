@@ -10,9 +10,6 @@ import io
 from scipy.spatial.distance import cosine
 from openai import OpenAI
 
-# Initialize OpenAI client
-client = OpenAI()
-
 # Download necessary NLTK data
 nltk.download('punkt', quiet=True)
 nltk.download('stopwords', quiet=True)
@@ -86,7 +83,8 @@ st.markdown("""
 # Prompt the user to enter their OpenAI API key
 api_key = st.text_input("Enter your OpenAI API Key", type="password")
 if api_key:
-    client.api_key = api_key
+    # Initialize OpenAI client with the provided API key
+    client = OpenAI(api_key=api_key)
 
 # Template download
 def generate_template():
