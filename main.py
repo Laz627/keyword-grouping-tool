@@ -54,14 +54,14 @@ def refine_cluster_name(cluster_name, keywords):
     Refine the cluster name using GPT-4 optimized model (gpt-4-0613).
     """
     prompt = f"""
-    The following cluster of keywords has been assigned the initial name '{cluster_name}'. Based on the keywords listed, suggest a more descriptive and relevant cluster name that accurately represents the keywords:
+    The following cluster of keywords has been assigned the initial name '{cluster_name}'. Based on the keywords listed, only provide the cluster name in your output, suggesting a more descriptive and relevant cluster name that accurately represents the keywords:
     
     Keywords: {', '.join(keywords)}
     
     Suggested Cluster Name:
     """
     response = openai.ChatCompletion.create(
-        model="gpt-4-0613",  # Use GPT-4 optimized version for faster response
+        model="gpt-4o",  # Use GPT-4 optimized version for faster response
         messages=[
             {"role": "system", "content": "You are a helpful assistant that provides refined cluster names for keyword groups."},
             {"role": "user", "content": prompt}
