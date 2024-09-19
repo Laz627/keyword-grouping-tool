@@ -21,9 +21,6 @@ stop_words = set(nltk.corpus.stopwords.words('english'))
 # Initialize the embedding model (MiniLM for speed)
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
-# Set your OpenAI API key
-openai.api_key = "your_openai_api_key"  # Replace with your actual API key
-
 def preprocess_text(text):
     # Convert to lowercase and tokenize
     words = nltk.word_tokenize(text.lower())
@@ -54,7 +51,7 @@ def find_closest_keyword(cluster_keywords, avg_embedding, reduced_embeddings):
 
 def refine_cluster_name(cluster_name, keywords):
     """
-    Refine the cluster name using OpenAI model.
+    Refine the cluster name using GPT-4 optimized model (gpt-4-0613).
     """
     prompt = f"""
     The following cluster of keywords has been assigned the initial name '{cluster_name}'. Based on the keywords listed, suggest a more descriptive and relevant cluster name that accurately represents the keywords:
@@ -63,23 +60,32 @@ def refine_cluster_name(cluster_name, keywords):
     
     Suggested Cluster Name:
     """
-    response = openai.Completion.create(
-        engine="text-davinci-003",  # You can also use GPT-4 if available
-        prompt=prompt,
+    response = openai.ChatCompletion.create(
+        model="gpt-4-0613",  # Use GPT-4 optimized version for faster response
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that provides refined cluster names for keyword groups."},
+            {"role": "user", "content": prompt}
+        ],
         max_tokens=50,
         temperature=0.7
     )
-    return response.choices[0].text.strip()
+    return response.choices[0].message['content'].strip()
 
 # Title and Instructions
 st.title("Keyword Clustering Tool with Enhanced Naming")
 st.markdown("""
     **Instructions:**
     1. Upload a CSV file with your keywords and optional fields (Search Volume, CPC, Ranked Position, URL).
-    2. Select the number of clusters using the slider before initiating the clustering process.
-    3. The tool will classify and cluster the keywords using semantic embeddings and generate a downloadable CSV file with the results.
-    4. OpenAI will refine the cluster names for better contextual relevance.
+    2. Enter your OpenAI API key to enable cluster name refinement.
+    3. Select the number of clusters using the slider before initiating the clustering process.
+    4. The tool will classify and cluster the keywords using semantic embeddings and generate a downloadable CSV file with the results.
+    5. OpenAI will refine the cluster names for better contextual relevance.
 """)
+
+# Prompt the user to enter their OpenAI API key
+api_key = st.text_input("Enter your OpenAI API Key", type="password")
+if api_key:
+    openai.api_key = api_key
 
 # Template download
 def generate_template():
@@ -125,7 +131,7 @@ if uploaded_file is not None:
         # Preprocess keywords
         df['Processed_Keywords'] = df['Keywords'].apply(preprocess_text)
 
-        if st.button("Classify and Cluster Keywords"):
+        if api_key and st.button("Classify and Cluster Keywords"):
             # Step 1: Generate embeddings for the processed keywords
             st.info("Generating embeddings, this might take a few minutes...")
             embeddings = embedding_model.encode(df['Processed_Keywords'].tolist(), show_progress_bar=True)
@@ -153,7 +159,7 @@ if uploaded_file is not None:
                 cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
                 avg_embedding, reduced_cluster_embeddings = average_embedding(cluster_keywords, pca)
                 initial_name = find_closest_keyword(cluster_keywords, avg_embedding, reduced_cluster_embeddings)
-                refined_name = refine_cluster_name(initial_name, cluster_keywords)  # Refine with OpenAI
+                refined_name = refine_cluster_name(initial_name, cluster_keywords)  # Refine with GPT-4 optimized
                 cluster_names.append({'Cluster': cluster, 'Cluster Name': refined_name})
                 progress_bar.progress((cluster + 1) / num_clusters)
             
@@ -180,3 +186,5 @@ if uploaded_file is not None:
             )
 
             st.dataframe(final_df)
+        elif not api_key:
+            st.warning("Please enter your OpenAI API key to enable cluster name refinement.")
