@@ -3,10 +3,10 @@ import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans
 from sentence_transformers import SentenceTransformer
+from sklearn.decomposition import PCA
 import nltk
 from nltk.stem import PorterStemmer
 import io
-import time
 import re
 
 # Download necessary NLTK data
@@ -48,7 +48,7 @@ st.title("Keyword Clustering Tool with Embeddings")
 st.markdown("""
     **Instructions:**
     1. Upload a CSV file with your keywords and optional fields (Search Volume, CPC, Ranked Position, URL).
-    2. Adjust the number of clusters for categorization. The higher your clustering number, the more specific the clusters will be.
+    2. Select the number of clusters using the slider before initiating the clustering process.
     3. The tool will classify and cluster the keywords using semantic embeddings and generate a downloadable CSV file with the results.
 """)
 
@@ -73,6 +73,15 @@ st.download_button(
 # File upload
 uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
 
+# Initialize session state for storing embeddings and reduced embeddings
+if 'embeddings' not in st.session_state:
+    st.session_state['embeddings'] = None
+    st.session_state['reduced_embeddings'] = None
+    st.session_state['df'] = None
+
+# User input for number of clusters
+num_clusters = st.slider("Select Number of Clusters", min_value=2, max_value=150, value=10, step=1)
+
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
     required_columns = ["Keywords"]
@@ -92,63 +101,62 @@ if uploaded_file is not None:
 
         # Preprocess keywords
         df['Processed_Keywords'] = df['Keywords'].apply(preprocess_text)
+        st.session_state['df'] = df
 
-        # Generate embeddings for the processed keywords
-        st.info("Generating embeddings, this might take a few minutes...")
-        progress_bar = st.progress(0)
-        embeddings = []
-        total_keywords = len(df['Processed_Keywords'])
+if st.session_state['df'] is not None and st.button("Classify and Cluster Keywords"):
+    df = st.session_state['df']
 
-        # Generate embeddings with progress updates
-        for idx, keyword in enumerate(df['Processed_Keywords']):
-            embedding = embedding_model.encode(keyword)
-            embeddings.append(embedding)
-            progress_bar.progress((idx + 1) / total_keywords)
+    # Step 1: Generate embeddings for the processed keywords
+    st.info("Generating embeddings, this might take a few minutes...")
+    embeddings = embedding_model.encode(df['Processed_Keywords'].tolist(), show_progress_bar=True)
+    st.session_state['embeddings'] = np.array(embeddings)
+    st.success("Embeddings generated successfully!")
 
-        # Convert list to numpy array for clustering
-        embeddings = np.array(embeddings)
-        st.success("Embeddings generated successfully!")
+    # Step 2: Reduce dimensions before clustering using PCA
+    st.info("Reducing dimensionality with PCA to speed up clustering...")
+    pca = PCA(n_components=50)  # Adjust number of components as needed
+    reduced_embeddings = pca.fit_transform(st.session_state['embeddings'])
+    st.session_state['reduced_embeddings'] = reduced_embeddings
+    st.success("Dimensionality reduction completed!")
 
-        # User input for number of clusters
-        num_clusters = st.slider("Select Number of Clusters", min_value=2, max_value=150, value=10, step=1)
+    # Step 3: Perform clustering
+    with st.spinner("Clustering keywords..."):
+        kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+        df['Cluster'] = kmeans.fit_predict(st.session_state['reduced_embeddings'])
+    
+    st.success("Clustering completed!")
 
-        if st.button("Classify and Cluster Keywords"):
-            with st.spinner("Clustering keywords..."):
-                # Perform clustering using the embeddings
-                kmeans = KMeans(n_clusters=num_clusters, random_state=42)
-                df['Cluster'] = kmeans.fit_predict(embeddings)
-            
-            st.success("Clustering completed!")
+    # Step 4: Generate cluster names using the cluster centroids
+    st.info("Generating cluster names, this might take a moment...")
+    cluster_names = []
+    progress_bar = st.progress(0)
+    for cluster in range(num_clusters):
+        cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
+        cluster_embedding = kmeans.cluster_centers_[cluster]
+        cluster_name = get_cluster_name(cluster_keywords, cluster_embedding)
+        cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
+        progress_bar.progress((cluster + 1) / num_clusters)
+    
+    cluster_names_df = pd.DataFrame(cluster_names)
+    
+    # Merge cluster names with the main dataframe
+    final_df = pd.merge(df, cluster_names_df, on='Cluster', how='left')
+    
+    # Select and order the final columns
+    final_columns = ['Keywords', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Cluster Name']
+    final_df = final_df[final_columns]
 
-            # Generate cluster names using the cluster centroids
-            cluster_names = []
-            progress_bar = st.progress(0)
-            for cluster in range(num_clusters):
-                cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
-                cluster_embedding = kmeans.cluster_centers_[cluster]
-                cluster_name = get_cluster_name(cluster_keywords, cluster_embedding)
-                cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
-                progress_bar.progress((cluster + 1) / num_clusters)
-            
-            cluster_names_df = pd.DataFrame(cluster_names)
-            
-            # Merge cluster names with the main dataframe
-            final_df = pd.merge(df, cluster_names_df, on='Cluster', how='left')
-            
-            # Select and order the final columns
-            final_columns = ['Keywords', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Cluster Name']
-            final_df = final_df[final_columns]
-        
-            # Prepare CSV for download
-            output = io.BytesIO()
-            final_df.to_csv(output, index=False)
-            output.seek(0)
-            
-            st.download_button(
-                label="Download Clustered Keywords CSV",
-                data=output,
-                file_name="clustered_keywords.csv",
-                mime="text/csv"
-            )
-        
-            st.dataframe(final_df)
+    # Step 5: Prepare CSV for download
+    st.info("Preparing the output file...")
+    output = io.BytesIO()
+    final_df.to_csv(output, index=False)
+    output.seek(0)
+    
+    st.download_button(
+        label="Download Clustered Keywords CSV",
+        data=output,
+        file_name="clustered_keywords.csv",
+        mime="text/csv"
+    )
+
+    st.dataframe(final_df)
