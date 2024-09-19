@@ -33,12 +33,15 @@ def get_cluster_name(cluster_keywords, cluster_embedding):
     """
     # Generate embeddings for each keyword in the cluster
     keyword_embeddings = embedding_model.encode(cluster_keywords)
+
+    # Ensure cluster_embedding is a 1D array
+    cluster_embedding = cluster_embedding.flatten()  # Flatten to ensure it's 1D if not already
     
     # Calculate cosine similarities between the centroid and each keyword
     similarities = np.dot(keyword_embeddings, cluster_embedding) / (
         np.linalg.norm(keyword_embeddings, axis=1) * np.linalg.norm(cluster_embedding)
     )
-    
+
     # Find the keyword with the highest similarity to the cluster centroid
     best_keyword = cluster_keywords[np.argmax(similarities)]
     return best_keyword
