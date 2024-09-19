@@ -26,7 +26,7 @@ def preprocess_text(text):
     # Remove stopwords and stem
     return ' '.join([stemmer.stem(word) for word in words if word.isalnum() and word not in stop_words])
 
-def get_cluster_name(cluster_keywords, cluster_embedding):
+def get_cluster_name(cluster_keywords, cluster_embedding, pca):
     """
     Find the most representative keyword from the cluster based on cosine similarity
     between each keyword's embedding and the cluster centroid embedding.
@@ -34,9 +34,12 @@ def get_cluster_name(cluster_keywords, cluster_embedding):
     # Generate embeddings for each keyword in the cluster
     keyword_embeddings = embedding_model.encode(cluster_keywords)
 
+    # Apply PCA to keyword embeddings to match the cluster_embedding dimensions
+    keyword_embeddings = pca.transform(keyword_embeddings)
+
     # Ensure cluster_embedding is a 1D array
-    cluster_embedding = cluster_embedding.flatten()  # Flatten to ensure it's 1D if not already
-    
+    cluster_embedding = cluster_embedding.flatten()
+
     # Calculate cosine similarities between the centroid and each keyword
     similarities = np.dot(keyword_embeddings, cluster_embedding) / (
         np.linalg.norm(keyword_embeddings, axis=1) * np.linalg.norm(cluster_embedding)
@@ -121,14 +124,14 @@ if st.session_state['df'] is not None and st.button("Classify and Cluster Keywor
     reduced_embeddings = pca.fit_transform(st.session_state['embeddings'])
     st.session_state['reduced_embeddings'] = reduced_embeddings
     st.success("Dimensionality reduction completed!")
-
+    
     # Step 3: Perform clustering
     with st.spinner("Clustering keywords..."):
         kmeans = KMeans(n_clusters=num_clusters, random_state=42)
         df['Cluster'] = kmeans.fit_predict(st.session_state['reduced_embeddings'])
     
     st.success("Clustering completed!")
-
+    
     # Step 4: Generate cluster names using the cluster centroids
     st.info("Generating cluster names, this might take a moment...")
     cluster_names = []
@@ -136,12 +139,13 @@ if st.session_state['df'] is not None and st.button("Classify and Cluster Keywor
     for cluster in range(num_clusters):
         cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
         cluster_embedding = kmeans.cluster_centers_[cluster]
-        cluster_name = get_cluster_name(cluster_keywords, cluster_embedding)
+        # Pass the PCA model to ensure compatible dimensions
+        cluster_name = get_cluster_name(cluster_keywords, cluster_embedding, pca)
         cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
         progress_bar.progress((cluster + 1) / num_clusters)
     
     cluster_names_df = pd.DataFrame(cluster_names)
-    
+
     # Merge cluster names with the main dataframe
     final_df = pd.merge(df, cluster_names_df, on='Cluster', how='left')
     
