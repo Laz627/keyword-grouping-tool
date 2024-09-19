@@ -9,12 +9,12 @@ import io
 from collections import Counter
 import re
 
-# Download necessary NLTK data
+# Ensure necessary NLTK data is downloaded every time the app runs
 nltk.download('punkt', quiet=True)
 nltk.download('stopwords', quiet=True)
 
 # Initialize stemmer and stopwords
-stemmer = PorterStemmer()
+stemmer = nltk.stem.PorterStemmer()
 stop_words = set(nltk.corpus.stopwords.words('english'))
 
 def preprocess_text(text):
