@@ -54,15 +54,15 @@ def refine_cluster_name(cluster_name, keywords):
     Refine the cluster name using GPT-4o-mini model.
     """
     prompt = f"""
-    The following group of keywords has been assigned the initial name '{cluster_name}'. Your task is to refine this cluster name to better represent the specific intent and themes within the keyword group. Please ensure the new name is concise, relevant, and incorporates key terms or themes from the list to improve its contextual fit.
+    You have been provided with a group of keywords and an initial cluster name: '{cluster_name}'. Your task is to refine this name to be concise, ideally 2-4 words, and effectively capture the primary theme of the keywords. The name should serve as a quick highlight of the grouping without being overly descriptive.
 
     Keywords: {', '.join(keywords)}
-    
-    Key Guidelines for Naming:
-    - Focus on creating a name that reflects the central theme among the keyword cluster.
-    - Use exact or partial matches of words from the keywords to maintain relevance.
-    - Do not use words that weren't found in the keyword cluster group.
-    - Only include the cluster name as part of the output.
+
+    Guidelines:
+    - Create a short and impactful cluster name that summarizes the primary theme.
+    - Focus on the most common or dominant terms in the keywords.
+    - Avoid lengthy, detailed descriptions; aim for a succinct, catchy phrase.
+    - Use exact or related terms from the keywords when possible.
     - Keep it more broad / generic, 3-4 words.
     
     Suggested Cluster Name:
