@@ -61,8 +61,6 @@ def refine_cluster_name(cluster_name, keywords):
     Key Guidelines for Naming:
     - Focus on creating a name that reflects the central theme or most common concepts among the keywords.
     - If possible, use exact or partial matches of words from the keywords to maintain relevance.
-    - Avoid overly generic names; instead, aim for a specific, targeted name that would make sense in a professional context (e.g., SEO, content categorization).
-    - Consider including aspects like product type, intended audience, functionality, or unique attributes that stand out in the keyword list.
     - Only include the cluster name as part of the output.
     
     Suggested Cluster Name:
