@@ -6,7 +6,7 @@ from sentence_transformers import SentenceTransformer
 import nltk
 from nltk.stem import PorterStemmer
 import io
-from collections import Counter
+import time
 import re
 
 # Download necessary NLTK data
@@ -94,24 +94,42 @@ if uploaded_file is not None:
         df['Processed_Keywords'] = df['Keywords'].apply(preprocess_text)
 
         # Generate embeddings for the processed keywords
-        embeddings = embedding_model.encode(df['Processed_Keywords'].tolist())
+        st.info("Generating embeddings, this might take a few minutes...")
+        progress_bar = st.progress(0)
+        embeddings = []
+        total_keywords = len(df['Processed_Keywords'])
+
+        # Generate embeddings with progress updates
+        for idx, keyword in enumerate(df['Processed_Keywords']):
+            embedding = embedding_model.encode(keyword)
+            embeddings.append(embedding)
+            progress_bar.progress((idx + 1) / total_keywords)
+
+        # Convert list to numpy array for clustering
+        embeddings = np.array(embeddings)
+        st.success("Embeddings generated successfully!")
 
         # User input for number of clusters
         num_clusters = st.slider("Select Number of Clusters", min_value=2, max_value=150, value=10, step=1)
 
         if st.button("Classify and Cluster Keywords"):
-            # Perform clustering using the embeddings
-            kmeans = KMeans(n_clusters=num_clusters, random_state=42)
-            df['Cluster'] = kmeans.fit_predict(embeddings)
-        
+            with st.spinner("Clustering keywords..."):
+                # Perform clustering using the embeddings
+                kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+                df['Cluster'] = kmeans.fit_predict(embeddings)
+            
+            st.success("Clustering completed!")
+
             # Generate cluster names using the cluster centroids
             cluster_names = []
+            progress_bar = st.progress(0)
             for cluster in range(num_clusters):
                 cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
                 cluster_embedding = kmeans.cluster_centers_[cluster]
                 cluster_name = get_cluster_name(cluster_keywords, cluster_embedding)
                 cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
-        
+                progress_bar.progress((cluster + 1) / num_clusters)
+            
             cluster_names_df = pd.DataFrame(cluster_names)
             
             # Merge cluster names with the main dataframe
