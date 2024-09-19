@@ -31,13 +31,25 @@ stop_words = set(nltk.corpus.stopwords.words('english'))
 
 def preprocess_text(text):
     try:
-        # Convert to lowercase and tokenize
-        words = nltk.word_tokenize(text.lower())
+        # Check if text is a string
+        if not isinstance(text, str):
+            return str(text)  # Convert to string if it's not
+
+        # Convert to lowercase
+        text_lower = text.lower()
+        
+        # Tokenize
+        words = nltk.word_tokenize(text_lower)
+        
         # Remove stopwords and stem
-        return ' '.join([stemmer.stem(word) for word in words if word.isalnum() and word not in stop_words])
+        processed_words = [stemmer.stem(word) for word in words if word.isalnum() and word not in stop_words]
+        
+        # Join words back into a string
+        return ' '.join(processed_words)
     except Exception as e:
         st.error(f"Error processing text: {str(e)}")
-        return text  # Return original text if processing fails
+        st.error(f"Problematic text: {text}")
+        return str(text)  # Return original text as string if processing fails
 
 def get_cluster_name(cluster_keywords, min_words=1, max_words=3):
     # Clean and split keywords
