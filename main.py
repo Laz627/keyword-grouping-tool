@@ -7,8 +7,8 @@ from sklearn.decomposition import PCA
 import nltk
 from nltk.stem import PorterStemmer
 import io
-import re
 from scipy.spatial.distance import cosine
+import openai
 
 # Download necessary NLTK data
 nltk.download('punkt', quiet=True)
@@ -18,8 +18,11 @@ nltk.download('stopwords', quiet=True)
 stemmer = PorterStemmer()
 stop_words = set(nltk.corpus.stopwords.words('english'))
 
-# Initialize the embedding model (MiniLM or another lightweight model for embeddings)
+# Initialize the embedding model (MiniLM for speed)
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# Set your OpenAI API key
+openai.api_key = "your_openai_api_key"  # Replace with your actual API key
 
 def preprocess_text(text):
     # Convert to lowercase and tokenize
@@ -49,6 +52,25 @@ def find_closest_keyword(cluster_keywords, avg_embedding, reduced_embeddings):
             closest_keyword = keyword
     return closest_keyword
 
+def refine_cluster_name(cluster_name, keywords):
+    """
+    Refine the cluster name using OpenAI model.
+    """
+    prompt = f"""
+    The following cluster of keywords has been assigned the initial name '{cluster_name}'. Based on the keywords listed, suggest a more descriptive and relevant cluster name that accurately represents the keywords:
+    
+    Keywords: {', '.join(keywords)}
+    
+    Suggested Cluster Name:
+    """
+    response = openai.Completion.create(
+        engine="text-davinci-003",  # You can also use GPT-4 if available
+        prompt=prompt,
+        max_tokens=50,
+        temperature=0.7
+    )
+    return response.choices[0].text.strip()
+
 # Title and Instructions
 st.title("Keyword Clustering Tool with Enhanced Naming")
 st.markdown("""
@@ -56,6 +78,7 @@ st.markdown("""
     1. Upload a CSV file with your keywords and optional fields (Search Volume, CPC, Ranked Position, URL).
     2. Select the number of clusters using the slider before initiating the clustering process.
     3. The tool will classify and cluster the keywords using semantic embeddings and generate a downloadable CSV file with the results.
+    4. OpenAI will refine the cluster names for better contextual relevance.
 """)
 
 # Template download
@@ -111,7 +134,7 @@ if uploaded_file is not None:
 
             # Step 2: Reduce dimensions before clustering using PCA
             st.info("Reducing dimensionality with PCA to speed up clustering...")
-            pca = PCA(n_components=50)  # Adjust number of components as needed
+            pca = PCA(n_components=50)
             reduced_embeddings = pca.fit_transform(embeddings)
             st.success("Dimensionality reduction completed!")
 
@@ -122,15 +145,16 @@ if uploaded_file is not None:
             
             st.success("Clustering completed!")
 
-            # Step 4: Generate cluster names using the average embedding approach
-            st.info("Generating cluster names, this might take a moment...")
+            # Step 4: Generate initial cluster names using the average embedding approach
+            st.info("Generating initial cluster names...")
             cluster_names = []
             progress_bar = st.progress(0)
             for cluster in range(num_clusters):
                 cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
                 avg_embedding, reduced_cluster_embeddings = average_embedding(cluster_keywords, pca)
-                cluster_name = find_closest_keyword(cluster_keywords, avg_embedding, reduced_cluster_embeddings)
-                cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
+                initial_name = find_closest_keyword(cluster_keywords, avg_embedding, reduced_cluster_embeddings)
+                refined_name = refine_cluster_name(initial_name, cluster_keywords)  # Refine with OpenAI
+                cluster_names.append({'Cluster': cluster, 'Cluster Name': refined_name})
                 progress_bar.progress((cluster + 1) / num_clusters)
             
             cluster_names_df = pd.DataFrame(cluster_names)
