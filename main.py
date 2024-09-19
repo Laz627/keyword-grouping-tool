@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
+from sentence_transformers import SentenceTransformer
 import nltk
 from nltk.stem import PorterStemmer
 import io
@@ -17,65 +17,39 @@ nltk.download('stopwords', quiet=True)
 stemmer = PorterStemmer()
 stop_words = set(nltk.corpus.stopwords.words('english'))
 
+# Initialize the embedding model (MiniLM or another lightweight model for embeddings)
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')  # Adjust as needed
+
 def preprocess_text(text):
     # Convert to lowercase and tokenize
     words = nltk.word_tokenize(text.lower())
     # Remove stopwords and stem
     return ' '.join([stemmer.stem(word) for word in words if word.isalnum() and word not in stop_words])
 
-def get_cluster_name(cluster_keywords, min_words=1, max_words=3):
-    # Clean and split keywords
-    words = [word for keyword in cluster_keywords for word in re.findall(r'\b\w+\b', keyword.lower())]
+def get_cluster_name(cluster_keywords, cluster_embedding):
+    """
+    Find the most representative keyword from the cluster based on cosine similarity
+    between each keyword's embedding and the cluster centroid embedding.
+    """
+    # Generate embeddings for each keyword in the cluster
+    keyword_embeddings = embedding_model.encode(cluster_keywords)
     
-    # Count word frequencies
-    word_counts = Counter(words)
+    # Calculate cosine similarities between the centroid and each keyword
+    similarities = np.dot(keyword_embeddings, cluster_embedding) / (
+        np.linalg.norm(keyword_embeddings, axis=1) * np.linalg.norm(cluster_embedding)
+    )
     
-    # Define words to exclude
-    exclude_words = set(['for', 'what', 'why', 'how', 'when', 'where', 'it', 'which', 'who', 'whom', 'whose', 'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'shall', 'should', 'may', 'might', 'must', 'can', 'could', 'that'])
-    
-    # Get the most common words, excluding certain words
-    common_words = [word for word, count in word_counts.most_common() 
-                    if word not in exclude_words and len(word) > 1]
-    
-    # Function to get the most representative words
-    def get_representative_words(words, min_n=min_words, max_n=max_words):
-        word_set = set()
-        result = []
-        for word in words:
-            if len(result) >= max_n:
-                break
-            if word not in word_set and not any(word in w or w in word for w in word_set):
-                word_set.add(word)
-                result.append(word)
-            if len(result) >= min_n:
-                # Check if the next word is significantly less common
-                if len(words) > len(result) and word_counts[words[len(result)]] < word_counts[result[-1]] / 2:
-                    break
-        return result
-    
-    # Get the most representative words
-    representative_words = get_representative_words(common_words)
-    
-    return ' '.join(representative_words)
-    
-    # If we don't have enough words, add generic terms
-    while len(representative_words) < 3:
-        if 'system' not in representative_words and 'system' in word_counts:
-            representative_words.append('system')
-        elif 'pos' not in representative_words and 'pos' in word_counts:
-            representative_words.append('pos')
-        else:
-            break  # If we can't add 'system' or 'pos', we'll stop here
-    
-    return ' '.join(representative_words)
+    # Find the keyword with the highest similarity to the cluster centroid
+    best_keyword = cluster_keywords[np.argmax(similarities)]
+    return best_keyword
 
 # Title and Instructions
-st.title("Keyword Clustering Tool")
+st.title("Keyword Clustering Tool with Embeddings")
 st.markdown("""
     **Instructions:**
     1. Upload a CSV file with your keywords and optional fields (Search Volume, CPC, Ranked Position, URL).
-    2. Adjust the number of clusters for categorization. The higher your clustering number, the more specific the clusters will be, which can make categorization less meaningful as granularity increases.
-    3. The tool will classify and cluster the keywords, and generate a downloadable CSV file with the results.
+    2. Adjust the number of clusters for categorization. The higher your clustering number, the more specific the clusters will be.
+    3. The tool will classify and cluster the keywords using semantic embeddings and generate a downloadable CSV file with the results.
 """)
 
 # Template download
@@ -119,28 +93,28 @@ if uploaded_file is not None:
         # Preprocess keywords
         df['Processed_Keywords'] = df['Keywords'].apply(preprocess_text)
 
+        # Generate embeddings for the processed keywords
+        embeddings = embedding_model.encode(df['Processed_Keywords'].tolist())
+
         # User input for number of clusters
         num_clusters = st.slider("Select Number of Clusters", min_value=2, max_value=150, value=10, step=1)
 
         if st.button("Classify and Cluster Keywords"):
-            # Vectorize the processed keywords
-            vectorizer = TfidfVectorizer()
-            X = vectorizer.fit_transform(df['Processed_Keywords'])
-        
-            # Perform clustering
+            # Perform clustering using the embeddings
             kmeans = KMeans(n_clusters=num_clusters, random_state=42)
-            df['Cluster'] = kmeans.fit_predict(X)
+            df['Cluster'] = kmeans.fit_predict(embeddings)
         
-            # Generate cluster names
+            # Generate cluster names using the cluster centroids
             cluster_names = []
             for cluster in range(num_clusters):
                 cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
-                cluster_name = get_cluster_name(cluster_keywords, min_words=1, max_words=3)
+                cluster_embedding = kmeans.cluster_centers_[cluster]
+                cluster_name = get_cluster_name(cluster_keywords, cluster_embedding)
                 cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
         
             cluster_names_df = pd.DataFrame(cluster_names)
             
-            # Merge cluster names with main dataframe
+            # Merge cluster names with the main dataframe
             final_df = pd.merge(df, cluster_names_df, on='Cluster', how='left')
             
             # Select and order the final columns
@@ -160,5 +134,3 @@ if uploaded_file is not None:
             )
         
             st.dataframe(final_df)
-
-# Run this app with: streamlit run script_name.py
