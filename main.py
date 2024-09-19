@@ -8,34 +8,55 @@ from nltk.stem import PorterStemmer
 import io
 from collections import Counter
 import re
+import os
+import shutil
 
-# Ensure that necessary NLTK resources are downloaded each time the app runs
-nltk.download('punkt', quiet=True)
-nltk.download('stopwords', quiet=True)
+# Define a custom path for NLTK data to avoid system conflicts
+nltk_data_dir = os.path.join(os.getcwd(), 'nltk_data')
 
-# Initialize stemmer and stopwords after ensuring proper download
+# Ensure necessary NLTK data is downloaded every time the app runs
+try:
+    # Attempt to clear existing 'punkt' resources to avoid conflicts
+    punkt_path = os.path.join(nltk_data_dir, 'tokenizers', 'punkt')
+    if os.path.exists(punkt_path):
+        shutil.rmtree(punkt_path)  # Remove the 'punkt' folder if it exists
+
+    # Download the correct 'punkt' resource and stopwords to the custom directory
+    nltk.download('punkt', download_dir=nltk_data_dir, quiet=True)
+    nltk.download('stopwords', download_dir=nltk_data_dir, quiet=True)
+
+    # Set the custom data path for NLTK
+    nltk.data.path.append(nltk_data_dir)
+except Exception as e:
+    st.error(f"Error downloading NLTK resources: {e}")
+    st.stop()
+
+# Initialize stemmer and stopwords
 stemmer = PorterStemmer()
 stop_words = set(nltk.corpus.stopwords.words('english'))
 
 def preprocess_text(text):
-    # Convert to lowercase and tokenize
-    words = nltk.word_tokenize(text.lower())
-    # Remove stopwords and stem
-    return ' '.join([stemmer.stem(word) for word in words if word.isalnum() and word not in stop_words])
+    try:
+        # Convert to lowercase and tokenize
+        words = nltk.word_tokenize(text.lower())
+        # Remove stopwords and stem
+        return ' '.join([stemmer.stem(word) for word in words if word.isalnum() and word not in stop_words])
+    except Exception as e:
+        st.error(f"Error processing text: {e}")
+        return ""
 
 def get_cluster_name(cluster_keywords, min_words=1, max_words=3):
     # Clean and split keywords
     words = [word for keyword in cluster_keywords for word in re.findall(r'\b\w+\b', keyword.lower())]
-    
     # Count word frequencies
     word_counts = Counter(words)
-    
     # Define words to exclude
-    exclude_words = set(['for', 'what', 'why', 'how', 'when', 'where', 'it', 'which', 'who', 'whom', 'whose', 'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'shall', 'should', 'may', 'might', 'must', 'can', 'could', 'that'])
-    
+    exclude_words = set(['for', 'what', 'why', 'how', 'when', 'where', 'it', 'which', 'who', 'whom', 'whose', 
+                         'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of', 'is', 'are', 'was', 
+                         'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 
+                         'would', 'shall', 'should', 'may', 'might', 'must', 'can', 'could', 'that'])
     # Get the most common words, excluding certain words
-    common_words = [word for word, count in word_counts.most_common() 
-                    if word not in exclude_words and len(word) > 1]
+    common_words = [word for word, count in word_counts.most_common() if word not in exclude_words and len(word) > 1]
     
     # Function to get the most representative words
     def get_representative_words(words, min_n=min_words, max_n=max_words):
@@ -55,17 +76,6 @@ def get_cluster_name(cluster_keywords, min_words=1, max_words=3):
     
     # Get the most representative words
     representative_words = get_representative_words(common_words)
-    
-    return ' '.join(representative_words)
-    
-    # If we don't have enough words, add generic terms
-    while len(representative_words) < 3:
-        if 'system' not in representative_words and 'system' in word_counts:
-            representative_words.append('system')
-        elif 'pos' not in representative_words and 'pos' in word_counts:
-            representative_words.append('pos')
-        else:
-            break  # If we can't add 'system' or 'pos', we'll stop here
     
     return ' '.join(representative_words)
 
@@ -100,7 +110,16 @@ st.download_button(
 uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
 
 if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file)
+    # Attempt to read the file with various encodings
+    try:
+        df = pd.read_csv(uploaded_file, encoding='utf-8')
+    except UnicodeDecodeError:
+        try:
+            df = pd.read_csv(uploaded_file, encoding='ISO-8859-1')
+        except UnicodeDecodeError:
+            st.error("Unable to read the file. Please ensure the file is properly encoded.")
+            st.stop()
+
     required_columns = ["Keywords"]
     optional_columns = ["Search Volume", "CPC", "Ranked Position", "URL"]
     
@@ -160,5 +179,3 @@ if uploaded_file is not None:
             )
         
             st.dataframe(final_df)
-
-# Run this app with: streamlit run script_name.py
