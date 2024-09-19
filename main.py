@@ -8,13 +8,28 @@ from nltk.stem import PorterStemmer
 import io
 from collections import Counter
 import re
+import shutil
+
+# Path to NLTK data directory
+nltk_data_dir = os.path.join(os.getcwd(), 'nltk_data')
+
+# Remove the existing punkt tokenizer directory to clear any corrupted files
+try:
+    punkt_path = os.path.join(nltk_data_dir, 'tokenizers', 'punkt')
+    if os.path.exists(punkt_path):
+        shutil.rmtree(punkt_path)
+except Exception as e:
+    print(f"Error removing punkt directory: {e}")
 
 # Download necessary NLTK data
-nltk.download('punkt', quiet=True)
-nltk.download('stopwords', quiet=True)
+nltk.download('punkt', download_dir=nltk_data_dir, quiet=True)
+nltk.download('stopwords', download_dir=nltk_data_dir, quiet=True)
+
+# Point NLTK to the custom data directory
+nltk.data.path.append(nltk_data_dir)
 
 # Initialize stemmer and stopwords
-stemmer = PorterStemmer()
+stemmer = nltk.stem.PorterStemmer()
 stop_words = set(nltk.corpus.stopwords.words('english'))
 
 def preprocess_text(text):
