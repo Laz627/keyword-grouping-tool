@@ -100,13 +100,25 @@ st.download_button(
 uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
 
 if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file)
+    try:
+        # Attempt to read the file with UTF-8 encoding
+        df = pd.read_csv(uploaded_file, encoding='utf-8')
+    except UnicodeDecodeError:
+        try:
+            # If UTF-8 fails, try reading with 'ISO-8859-1' encoding
+            df = pd.read_csv(uploaded_file, encoding='ISO-8859-1')
+        except UnicodeDecodeError:
+            # If both encodings fail, display an error message
+            st.error("Unable to read the file. Please ensure the file is properly encoded.")
+            st.stop()
+    
     required_columns = ["Keywords"]
     optional_columns = ["Search Volume", "CPC", "Ranked Position", "URL"]
-    
+
     if "Keywords" not in df.columns:
         st.error("CSV must contain 'Keywords' column.")
     else:
+        # Rest of your code for processing the CSV file
         # Ensure optional columns are present and fill NaN with empty strings
         for col in optional_columns:
             if col not in df.columns:
@@ -116,7 +128,7 @@ if uploaded_file is not None:
         
         df['Keywords'] = df['Keywords'].astype(str)
 
-        # Preprocess keywords
+        # Continue with preprocessing and clustering
         df['Processed_Keywords'] = df['Keywords'].apply(preprocess_text)
 
         # User input for number of clusters
