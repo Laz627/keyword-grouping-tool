@@ -11,25 +11,25 @@ from collections import Counter
 import re
 import os
 
-# Define a custom directory for NLTK data to ensure correct paths
+# Define a custom path for NLTK data to avoid system conflicts
 nltk_data_dir = os.path.join(os.getcwd(), 'nltk_data')
 
-# Attempt to remove any existing 'punkt' directory to clear any corrupted files
+# Clear existing 'punkt' resources to ensure a clean state
 try:
     punkt_path = os.path.join(nltk_data_dir, 'tokenizers', 'punkt')
     if os.path.exists(punkt_path):
-        shutil.rmtree(punkt_path)
+        shutil.rmtree(punkt_path)  # Remove the 'punkt' folder if it exists
 except Exception as e:
     print(f"Error removing punkt directory: {e}")
 
-# Download the correct 'punkt' resource to the custom directory
+# Download the necessary NLTK data to the custom path
 nltk.download('punkt', download_dir=nltk_data_dir, quiet=True)
 nltk.download('stopwords', download_dir=nltk_data_dir, quiet=True)
 
-# Add the custom data directory to NLTK's path
+# Set the custom data path for NLTK
 nltk.data.path.append(nltk_data_dir)
 
-# Initialize stemmer and stopwords
+# Initialize the stemmer and stopwords after ensuring proper setup
 stemmer = nltk.stem.PorterStemmer()
 stop_words = set(nltk.corpus.stopwords.words('english'))
 
