@@ -8,48 +8,20 @@ from nltk.stem import PorterStemmer
 import io
 from collections import Counter
 import re
-import os
 
-# Set a custom download directory in the Streamlit shared directory
-nltk.data.path.append('/tmp/nltk_data')
-os.environ['NLTK_DATA'] = '/tmp/nltk_data'
-
-def download_nltk_data():
-    try:
-        nltk.data.find('tokenizers/punkt')
-        nltk.data.find('corpora/stopwords')
-    except LookupError:
-        nltk.download('punkt', quiet=True)
-        nltk.download('stopwords', quiet=True)
-
-# Call this function at the start of your script
-download_nltk_data()
+# Download necessary NLTK data
+nltk.download('punkt', quiet=True)
+nltk.download('stopwords', quiet=True)
 
 # Initialize stemmer and stopwords
-stemmer = nltk.stem.PorterStemmer()
+stemmer = PorterStemmer()
 stop_words = set(nltk.corpus.stopwords.words('english'))
 
 def preprocess_text(text):
-    try:
-        # Check if text is a string
-        if not isinstance(text, str):
-            return str(text)  # Convert to string if it's not
-
-        # Convert to lowercase
-        text_lower = text.lower()
-        
-        # Tokenize
-        words = nltk.word_tokenize(text_lower)
-        
-        # Remove stopwords and stem
-        processed_words = [stemmer.stem(word) for word in words if word.isalnum() and word not in stop_words]
-        
-        # Join words back into a string
-        return ' '.join(processed_words)
-    except Exception as e:
-        st.error(f"Error processing text: {str(e)}")
-        st.error(f"Problematic text: {text}")
-        return str(text)  # Return original text as string if processing fails
+    # Convert to lowercase and tokenize
+    words = nltk.word_tokenize(text.lower())
+    # Remove stopwords and stem
+    return ' '.join([stemmer.stem(word) for word in words if word.isalnum() and word not in stop_words])
 
 def get_cluster_name(cluster_keywords, min_words=1, max_words=3):
     # Clean and split keywords
@@ -85,6 +57,17 @@ def get_cluster_name(cluster_keywords, min_words=1, max_words=3):
     representative_words = get_representative_words(common_words)
     
     return ' '.join(representative_words)
+    
+    # If we don't have enough words, add generic terms
+    while len(representative_words) < 3:
+        if 'system' not in representative_words and 'system' in word_counts:
+            representative_words.append('system')
+        elif 'pos' not in representative_words and 'pos' in word_counts:
+            representative_words.append('pos')
+        else:
+            break  # If we can't add 'system' or 'pos', we'll stop here
+    
+    return ' '.join(representative_words)
 
 # Title and Instructions
 st.title("Keyword Clustering Tool")
@@ -117,21 +100,10 @@ st.download_button(
 uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
 
 if uploaded_file is not None:
-    try:
-        # Attempt to read the file with UTF-8 encoding
-        df = pd.read_csv(uploaded_file, encoding='utf-8')
-    except UnicodeDecodeError:
-        try:
-            # If UTF-8 fails, try reading with 'ISO-8859-1' encoding
-            df = pd.read_csv(uploaded_file, encoding='ISO-8859-1')
-        except UnicodeDecodeError:
-            # If both encodings fail, display an error message
-            st.error("Unable to read the file. Please ensure the file is properly encoded.")
-            st.stop()
-    
+    df = pd.read_csv(uploaded_file)
     required_columns = ["Keywords"]
     optional_columns = ["Search Volume", "CPC", "Ranked Position", "URL"]
-
+    
     if "Keywords" not in df.columns:
         st.error("CSV must contain 'Keywords' column.")
     else:
@@ -144,53 +116,49 @@ if uploaded_file is not None:
         
         df['Keywords'] = df['Keywords'].astype(str)
 
-        try:
-            # Continue with preprocessing and clustering
-            df['Processed_Keywords'] = df['Keywords'].apply(preprocess_text)
+        # Preprocess keywords
+        df['Processed_Keywords'] = df['Keywords'].apply(preprocess_text)
 
-            # User input for number of clusters
-            num_clusters = st.slider("Select Number of Clusters", min_value=2, max_value=150, value=10, step=1)
+        # User input for number of clusters
+        num_clusters = st.slider("Select Number of Clusters", min_value=2, max_value=150, value=10, step=1)
 
-            if st.button("Classify and Cluster Keywords"):
-                # Vectorize the processed keywords
-                vectorizer = TfidfVectorizer()
-                X = vectorizer.fit_transform(df['Processed_Keywords'])
+        if st.button("Classify and Cluster Keywords"):
+            # Vectorize the processed keywords
+            vectorizer = TfidfVectorizer()
+            X = vectorizer.fit_transform(df['Processed_Keywords'])
+        
+            # Perform clustering
+            kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+            df['Cluster'] = kmeans.fit_predict(X)
+        
+            # Generate cluster names
+            cluster_names = []
+            for cluster in range(num_clusters):
+                cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
+                cluster_name = get_cluster_name(cluster_keywords, min_words=1, max_words=3)
+                cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
+        
+            cluster_names_df = pd.DataFrame(cluster_names)
             
-                # Perform clustering
-                kmeans = KMeans(n_clusters=num_clusters, random_state=42)
-                df['Cluster'] = kmeans.fit_predict(X)
+            # Merge cluster names with main dataframe
+            final_df = pd.merge(df, cluster_names_df, on='Cluster', how='left')
             
-                # Generate cluster names
-                cluster_names = []
-                for cluster in range(num_clusters):
-                    cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
-                    cluster_name = get_cluster_name(cluster_keywords, min_words=1, max_words=3)
-                    cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
+            # Select and order the final columns
+            final_columns = ['Keywords', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Cluster Name']
+            final_df = final_df[final_columns]
+        
+            # Prepare CSV for download
+            output = io.BytesIO()
+            final_df.to_csv(output, index=False)
+            output.seek(0)
             
-                cluster_names_df = pd.DataFrame(cluster_names)
-                
-                # Merge cluster names with main dataframe
-                final_df = pd.merge(df, cluster_names_df, on='Cluster', how='left')
-                
-                # Select and order the final columns
-                final_columns = ['Keywords', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Cluster Name']
-                final_df = final_df[final_columns]
-            
-                # Prepare CSV for download
-                output = io.BytesIO()
-                final_df.to_csv(output, index=False)
-                output.seek(0)
-                
-                st.download_button(
-                    label="Download Clustered Keywords CSV",
-                    data=output,
-                    file_name="clustered_keywords.csv",
-                    mime="text/csv"
-                )
-            
-                st.dataframe(final_df)
-        except Exception as e:
-            st.error(f"An error occurred while processing keywords: {str(e)}")
-            st.stop()
+            st.download_button(
+                label="Download Clustered Keywords CSV",
+                data=output,
+                file_name="clustered_keywords.csv",
+                mime="text/csv"
+            )
+        
+            st.dataframe(final_df)
 
 # Run this app with: streamlit run script_name.py
