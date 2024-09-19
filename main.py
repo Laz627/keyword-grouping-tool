@@ -1,4 +1,3 @@
-import shutil
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -9,28 +8,13 @@ from nltk.stem import PorterStemmer
 import io
 from collections import Counter
 import re
-import os
 
-# Define a custom path for NLTK data to avoid system conflicts
-nltk_data_dir = os.path.join(os.getcwd(), 'nltk_data')
+# Ensure that necessary NLTK resources are downloaded each time the app runs
+nltk.download('punkt', quiet=True)
+nltk.download('stopwords', quiet=True)
 
-# Clear existing 'punkt' resources to ensure a clean state
-try:
-    punkt_path = os.path.join(nltk_data_dir, 'tokenizers', 'punkt')
-    if os.path.exists(punkt_path):
-        shutil.rmtree(punkt_path)  # Remove the 'punkt' folder if it exists
-except Exception as e:
-    print(f"Error removing punkt directory: {e}")
-
-# Download the necessary NLTK data to the custom path
-nltk.download('punkt', download_dir=nltk_data_dir, quiet=True)
-nltk.download('stopwords', download_dir=nltk_data_dir, quiet=True)
-
-# Set the custom data path for NLTK
-nltk.data.path.append(nltk_data_dir)
-
-# Initialize the stemmer and stopwords after ensuring proper setup
-stemmer = nltk.stem.PorterStemmer()
+# Initialize stemmer and stopwords after ensuring proper download
+stemmer = PorterStemmer()
 stop_words = set(nltk.corpus.stopwords.words('english'))
 
 def preprocess_text(text):
