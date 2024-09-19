@@ -117,8 +117,11 @@ if uploaded_file is not None:
         try:
             df = pd.read_csv(uploaded_file, encoding='ISO-8859-1')
         except UnicodeDecodeError:
-            st.error("Unable to read the file. Please ensure the file is properly encoded.")
-            st.stop()
+            try:
+                df = pd.read_csv(uploaded_file, encoding='latin1')
+            except UnicodeDecodeError:
+                st.error("Unable to read the file. Please ensure the file is properly encoded.")
+                st.stop()
 
     required_columns = ["Keywords"]
     optional_columns = ["Search Volume", "CPC", "Ranked Position", "URL"]
