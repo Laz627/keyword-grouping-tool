@@ -3,4 +3,6 @@ pandas==1.5.3
 numpy==1.23.5
 scikit-learn==1.2.2
 nltk==3.7
-SentenceTransformer
+sentence-transformers>=2.2.2  # For using MiniLM or other SentenceTransformer models
+torch                   # Required by sentence-transformers for embeddings (PyTorch backend)
+transformers            # Additional library for using advanced transformer models
