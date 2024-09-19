@@ -1,3 +1,4 @@
+import shutil
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -9,7 +10,6 @@ import io
 from collections import Counter
 import re
 import os
-import shutil  # Ensure this import is at the top
 
 # Path to NLTK data directory
 nltk_data_dir = os.path.join(os.getcwd(), 'nltk_data')
