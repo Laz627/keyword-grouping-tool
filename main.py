@@ -19,7 +19,7 @@ stemmer = PorterStemmer()
 stop_words = set(nltk.corpus.stopwords.words('english'))
 
 # Initialize the embedding model (MiniLM or another lightweight model for embeddings)
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')  # Adjust as needed
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 def preprocess_text(text):
     # Convert to lowercase and tokenize
@@ -80,11 +80,12 @@ st.download_button(
 # File upload
 uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
 
-# Initialize session state for storing embeddings and reduced embeddings
+# Initialize session state for storing embeddings, reduced embeddings, and cluster names
 if 'embeddings' not in st.session_state:
     st.session_state['embeddings'] = None
     st.session_state['reduced_embeddings'] = None
     st.session_state['df'] = None
+    st.session_state['cluster_names'] = {}
 
 # User input for number of clusters
 num_clusters = st.slider("Select Number of Clusters", min_value=2, max_value=150, value=10, step=1)
@@ -121,7 +122,7 @@ if st.session_state['df'] is not None and st.button("Classify and Cluster Keywor
 
     # Step 2: Reduce dimensions before clustering using PCA
     st.info("Reducing dimensionality with PCA to speed up clustering...")
-    pca = PCA(n_components=50)  # Adjust number of components as needed
+    pca = PCA(n_components=50)
     reduced_embeddings = pca.fit_transform(st.session_state['embeddings'])
     st.session_state['reduced_embeddings'] = reduced_embeddings
     st.success("Dimensionality reduction completed!")
@@ -142,6 +143,7 @@ if st.session_state['df'] is not None and st.button("Classify and Cluster Keywor
         avg_embedding, reduced_cluster_embeddings = average_embedding(cluster_keywords, pca)
         cluster_name = find_closest_keyword(cluster_keywords, avg_embedding, reduced_cluster_embeddings)
         cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
+        st.session_state['cluster_names'][cluster] = cluster_name  # Store in session state
         progress_bar.progress((cluster + 1) / num_clusters)
     
     cluster_names_df = pd.DataFrame(cluster_names)
@@ -153,11 +155,13 @@ if st.session_state['df'] is not None and st.button("Classify and Cluster Keywor
     final_columns = ['Keywords', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Cluster Name']
     final_df = final_df[final_columns]
 
-    # Step 5: Allow user to adjust cluster names
+    # Step 5: Allow user to adjust cluster names with session state management
     st.info("Adjust cluster names if needed:")
-    for index, row in final_df.drop_duplicates('Cluster Name').iterrows():
-        new_name = st.text_input(f"Cluster Name for Cluster {row['Cluster']}", value=row['Cluster Name'])
-        final_df.loc[final_df['Cluster'] == row['Cluster'], 'Cluster Name'] = new_name
+    for cluster in range(num_clusters):
+        cluster_name = st.session_state['cluster_names'].get(cluster, f"Cluster {cluster}")
+        new_name = st.text_input(f"Cluster Name for Cluster {cluster}", value=cluster_name, key=f'cluster_name_{cluster}')
+        st.session_state['cluster_names'][cluster] = new_name
+        final_df.loc[final_df['Cluster'] == cluster, 'Cluster Name'] = new_name
 
     # Step 6: Prepare CSV for download
     st.info("Preparing the output file...")
