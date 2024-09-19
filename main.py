@@ -8,7 +8,10 @@ import nltk
 from nltk.stem import PorterStemmer
 import io
 from scipy.spatial.distance import cosine
-import openai
+from openai import OpenAI
+
+# Initialize OpenAI client
+client = OpenAI()
 
 # Download necessary NLTK data
 nltk.download('punkt', quiet=True)
@@ -51,7 +54,7 @@ def find_closest_keyword(cluster_keywords, avg_embedding, reduced_embeddings):
 
 def refine_cluster_name(cluster_name, keywords):
     """
-    Refine the cluster name using GPT-4 optimized model (gpt-4-0613).
+    Refine the cluster name using GPT-4o-mini model.
     """
     prompt = f"""
     The following cluster of keywords has been assigned the initial name '{cluster_name}'. Based on the keywords listed, only provide the cluster name in your output, suggesting a more descriptive and relevant cluster name that accurately represents the keywords:
@@ -60,14 +63,12 @@ def refine_cluster_name(cluster_name, keywords):
     
     Suggested Cluster Name:
     """
-    response = openai.ChatCompletion.create(
-        model="gpt-4o",  # Use GPT-4 optimized version for faster response
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",  # Use GPT-4o-mini model
         messages=[
             {"role": "system", "content": "You are a helpful assistant that provides refined cluster names for keyword groups."},
             {"role": "user", "content": prompt}
-        ],
-        max_tokens=50,
-        temperature=0.7
+        ]
     )
     return response.choices[0].message['content'].strip()
 
@@ -85,7 +86,7 @@ st.markdown("""
 # Prompt the user to enter their OpenAI API key
 api_key = st.text_input("Enter your OpenAI API Key", type="password")
 if api_key:
-    openai.api_key = api_key
+    client.api_key = api_key
 
 # Template download
 def generate_template():
@@ -159,7 +160,7 @@ if uploaded_file is not None:
                 cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
                 avg_embedding, reduced_cluster_embeddings = average_embedding(cluster_keywords, pca)
                 initial_name = find_closest_keyword(cluster_keywords, avg_embedding, reduced_cluster_embeddings)
-                refined_name = refine_cluster_name(initial_name, cluster_keywords)  # Refine with GPT-4 optimized
+                refined_name = refine_cluster_name(initial_name, cluster_keywords)  # Refine with GPT-4o-mini
                 cluster_names.append({'Cluster': cluster, 'Cluster Name': refined_name})
                 progress_bar.progress((cluster + 1) / num_clusters)
             
