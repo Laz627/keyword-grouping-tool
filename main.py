@@ -68,13 +68,13 @@ def refine_cluster_name(cluster_name, keywords):
         ]
     )
 
-    # Extract the content of the assistant's message correctly
+    # Correctly access the response content
     try:
-        return response['choices'][0]['message']['content'].strip()
-    except (KeyError, IndexError, TypeError) as e:
-        # Provide a fallback name in case of an error
+        content = response.choices[0].message.content.strip()
+        return content
+    except AttributeError as e:
+        # Handle the case where the response format does not match expectations
         return f"Refined Cluster Name Error: {str(e)}"
-
 
 # Title and Instructions
 st.title("Keyword Clustering Tool with Enhanced Naming")
