@@ -8,6 +8,7 @@ import nltk
 from nltk.stem import PorterStemmer
 import io
 import re
+from scipy.spatial.distance import cosine
 
 # Download necessary NLTK data
 nltk.download('punkt', quiet=True)
@@ -26,36 +27,36 @@ def preprocess_text(text):
     # Remove stopwords and stem
     return ' '.join([stemmer.stem(word) for word in words if word.isalnum() and word not in stop_words])
 
-def get_cluster_name(cluster_keywords, cluster_embedding, pca):
+def average_embedding(cluster_keywords, pca):
     """
-    Find the most representative keyword from the cluster based on cosine similarity
-    between each keyword's embedding and the cluster centroid embedding.
+    Calculate the average embedding for a list of keywords after applying PCA to reduce dimensions.
     """
-    # Generate embeddings for each keyword in the cluster
     keyword_embeddings = embedding_model.encode(cluster_keywords)
+    reduced_embeddings = pca.transform(keyword_embeddings)
+    avg_embedding = np.mean(reduced_embeddings, axis=0)
+    return avg_embedding, reduced_embeddings
 
-    # Apply PCA to keyword embeddings to match the cluster_embedding dimensions
-    keyword_embeddings = pca.transform(keyword_embeddings)
-
-    # Ensure cluster_embedding is a 1D array
-    cluster_embedding = cluster_embedding.flatten()
-
-    # Calculate cosine similarities between the centroid and each keyword
-    similarities = np.dot(keyword_embeddings, cluster_embedding) / (
-        np.linalg.norm(keyword_embeddings, axis=1) * np.linalg.norm(cluster_embedding)
-    )
-
-    # Find the keyword with the highest similarity to the cluster centroid
-    best_keyword = cluster_keywords[np.argmax(similarities)]
-    return best_keyword
+def find_closest_keyword(cluster_keywords, avg_embedding, reduced_embeddings):
+    """
+    Find the keyword closest to the average embedding of the cluster.
+    """
+    closest_keyword = cluster_keywords[0]
+    closest_distance = float('inf')
+    for keyword, embedding in zip(cluster_keywords, reduced_embeddings):
+        distance = cosine(avg_embedding, embedding)
+        if distance < closest_distance:
+            closest_distance = distance
+            closest_keyword = keyword
+    return closest_keyword
 
 # Title and Instructions
-st.title("Keyword Clustering Tool with Embeddings")
+st.title("Keyword Clustering Tool with Enhanced Naming")
 st.markdown("""
     **Instructions:**
     1. Upload a CSV file with your keywords and optional fields (Search Volume, CPC, Ranked Position, URL).
     2. Select the number of clusters using the slider before initiating the clustering process.
     3. The tool will classify and cluster the keywords using semantic embeddings and generate a downloadable CSV file with the results.
+    4. You can adjust cluster names if needed.
 """)
 
 # Template download
@@ -124,28 +125,27 @@ if st.session_state['df'] is not None and st.button("Classify and Cluster Keywor
     reduced_embeddings = pca.fit_transform(st.session_state['embeddings'])
     st.session_state['reduced_embeddings'] = reduced_embeddings
     st.success("Dimensionality reduction completed!")
-    
+
     # Step 3: Perform clustering
     with st.spinner("Clustering keywords..."):
         kmeans = KMeans(n_clusters=num_clusters, random_state=42)
         df['Cluster'] = kmeans.fit_predict(st.session_state['reduced_embeddings'])
     
     st.success("Clustering completed!")
-    
-    # Step 4: Generate cluster names using the cluster centroids
+
+    # Step 4: Generate cluster names using the average embedding approach
     st.info("Generating cluster names, this might take a moment...")
     cluster_names = []
     progress_bar = st.progress(0)
     for cluster in range(num_clusters):
         cluster_keywords = df[df['Cluster'] == cluster]['Keywords'].tolist()
-        cluster_embedding = kmeans.cluster_centers_[cluster]
-        # Pass the PCA model to ensure compatible dimensions
-        cluster_name = get_cluster_name(cluster_keywords, cluster_embedding, pca)
+        avg_embedding, reduced_cluster_embeddings = average_embedding(cluster_keywords, pca)
+        cluster_name = find_closest_keyword(cluster_keywords, avg_embedding, reduced_cluster_embeddings)
         cluster_names.append({'Cluster': cluster, 'Cluster Name': cluster_name})
         progress_bar.progress((cluster + 1) / num_clusters)
     
     cluster_names_df = pd.DataFrame(cluster_names)
-
+    
     # Merge cluster names with the main dataframe
     final_df = pd.merge(df, cluster_names_df, on='Cluster', how='left')
     
@@ -153,7 +153,13 @@ if st.session_state['df'] is not None and st.button("Classify and Cluster Keywor
     final_columns = ['Keywords', 'Search Volume', 'CPC', 'Ranked Position', 'URL', 'Cluster', 'Cluster Name']
     final_df = final_df[final_columns]
 
-    # Step 5: Prepare CSV for download
+    # Step 5: Allow user to adjust cluster names
+    st.info("Adjust cluster names if needed:")
+    for index, row in final_df.drop_duplicates('Cluster Name').iterrows():
+        new_name = st.text_input(f"Cluster Name for Cluster {row['Cluster']}", value=row['Cluster Name'])
+        final_df.loc[final_df['Cluster'] == row['Cluster'], 'Cluster Name'] = new_name
+
+    # Step 6: Prepare CSV for download
     st.info("Preparing the output file...")
     output = io.BytesIO()
     final_df.to_csv(output, index=False)
