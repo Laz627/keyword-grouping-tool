@@ -59,8 +59,9 @@ def refine_cluster_name(cluster_name, keywords):
     Keywords: {', '.join(keywords)}
     
     Key Guidelines for Naming:
-    - Focus on creating a name that reflects the central theme or most common concepts among the keywords.
-    - If possible, use exact or partial matches of words from the keywords to maintain relevance.
+    - Focus on creating a name that reflects the central theme among the keyword cluster.
+    - Use exact or partial matches of words from the keywords to maintain relevance.
+    - Do not use words that weren't found in the keyword cluster group.
     - Only include the cluster name as part of the output.
     
     Suggested Cluster Name:
