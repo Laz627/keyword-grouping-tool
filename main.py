@@ -61,13 +61,20 @@ def refine_cluster_name(cluster_name, keywords):
     Suggested Cluster Name:
     """
     response = client.chat.completions.create(
-        model="gpt-4o-mini",  # Use GPT-4o-mini model
+        model="gpt-4o",  # Use GPT-4o-mini model
         messages=[
             {"role": "system", "content": "You are a helpful assistant that provides refined cluster names for keyword groups."},
             {"role": "user", "content": prompt}
         ]
     )
-    return response.choices[0].message['content'].strip()
+
+    # Extract the content of the assistant's message correctly
+    try:
+        return response['choices'][0]['message']['content'].strip()
+    except (KeyError, IndexError, TypeError) as e:
+        # Provide a fallback name in case of an error
+        return f"Refined Cluster Name Error: {str(e)}"
+
 
 # Title and Instructions
 st.title("Keyword Clustering Tool with Enhanced Naming")
