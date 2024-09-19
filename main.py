@@ -54,16 +54,22 @@ def refine_cluster_name(cluster_name, keywords):
     Refine the cluster name using GPT-4o-mini model.
     """
     prompt = f"""
-    The following cluster of keywords has been assigned the initial name '{cluster_name}'. Based on the keywords listed, only provide the cluster name in your output, suggesting a more descriptive and relevant cluster name that accurately represents the keywords:
-    
+    The following group of keywords has been assigned the initial name '{cluster_name}'. Your task is to refine this cluster name to better represent the specific intent and themes within the keyword group. Please ensure the new name is concise, relevant, and incorporates key terms or themes from the list to improve its contextual fit.
+
     Keywords: {', '.join(keywords)}
+    
+    Key Guidelines for Naming:
+    - Focus on creating a name that reflects the central theme or most common concepts among the keywords.
+    - If possible, use exact or partial matches of words from the keywords to maintain relevance.
+    - Avoid overly generic names; instead, aim for a specific, targeted name that would make sense in a professional context (e.g., SEO, content categorization).
+    - Consider including aspects like product type, intended audience, functionality, or unique attributes that stand out in the keyword list.
     
     Suggested Cluster Name:
     """
     response = client.chat.completions.create(
         model="gpt-4o",  # Use GPT-4o-mini model
         messages=[
-            {"role": "system", "content": "You are a helpful assistant that provides refined cluster names for keyword groups."},
+            {"role": "system", "content": "You are an assistant that refines keyword cluster names for improved accuracy and contextual relevance."},
             {"role": "user", "content": prompt}
         ]
     )
