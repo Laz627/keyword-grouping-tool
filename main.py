@@ -7,11 +7,11 @@ import re
 # Initialize the KeyBERT model
 kw_model = KeyBERT()
 
-st.title("Keyword Theme Extraction with Seed Keyword Influence")
-st.markdown("Upload a CSV file with a 'Keywords' column and optionally specify a seed keyword to guide theme extraction.")
+st.title("Keyword Theme Extraction without Seed Keyword Influence")
+st.markdown("Upload a CSV file with a 'Keywords' column and optionally specify a seed keyword to exclude it from theme extraction.")
 
 # Optional input for seed keyword
-seed_keyword = st.text_input("Enter Seed Keyword (Optional)", value="")
+seed_keyword = st.text_input("Enter Seed Keyword to Exclude (Optional)", value="")
 
 uploaded_file = st.file_uploader("Upload your CSV file", type=["csv", "xls", "xlsx"])
 
@@ -33,21 +33,30 @@ def apply_keybert(df):
 
     return df
 
-# Function to detect themes based on frequent terms, with an emphasis on the seed keyword
+# Function to detect themes based on frequent terms, excluding the seed keyword
 def detect_themes(df, seed_keyword=""):
-    # Combine all bi-grams and tri-grams into a single list to detect frequent terms
-    all_phrases = df['Core (2-gram)'].tolist() + df['Core (3-gram)'].tolist()
+    # Remove the seed keyword from bi-grams and tri-grams to avoid bias
+    def clean_phrase(phrase):
+        if seed_keyword:
+            pattern = rf'\b{re.escape(seed_keyword)}\b'
+            return re.sub(pattern, '', phrase, flags=re.IGNORECASE).strip()
+        return phrase
+
+    df['Cleaned (2-gram)'] = df['Core (2-gram)'].apply(clean_phrase)
+    df['Cleaned (3-gram)'] = df['Core (3-gram)'].apply(clean_phrase)
+
+    # Combine cleaned bi-grams and tri-grams into a single list to detect frequent terms
+    all_phrases = df['Cleaned (2-gram)'].tolist() + df['Cleaned (3-gram)'].tolist()
     word_counts = Counter([word for phrase in all_phrases for word in re.findall(r'\w+', phrase.lower())])
 
-    # Add seed keyword as a high-priority term if specified
-    common_terms = [seed_keyword.lower()] if seed_keyword else []
-    common_terms += [term for term, freq in word_counts.items() if freq > 1 and term != seed_keyword.lower()]
+    # Define themes based on the most common non-seed terms
+    common_terms = [term for term, freq in word_counts.items() if freq > 1]  # Adjust threshold if needed
 
-    # Function to categorize each row based on detected themes, prioritizing the seed keyword
+    # Function to categorize each row based on detected themes, excluding the seed keyword
     def categorize_theme(row):
         for term in common_terms:
-            if re.search(rf'\b{term}\b', row['Core (3-gram)'], re.IGNORECASE):
-                return term.capitalize()  # Use the term as the theme
+            if re.search(rf'\b{term}\b', row['Cleaned (3-gram)'], re.IGNORECASE):
+                return term.capitalize()  # Use the frequent term as the theme
         return "Other"  # Default if no common term is found
 
     df['Theme'] = df.apply(categorize_theme, axis=1)
@@ -64,7 +73,7 @@ if uploaded_file:
     df_with_keybert = apply_keybert(df)
     
     if df_with_keybert is not None:
-        # Automatically detect themes with emphasis on the seed keyword
+        # Automatically detect themes, excluding the seed keyword
         df_with_themes = detect_themes(df_with_keybert, seed_keyword)
 
         st.write("Extracted Themes for Keywords:")
