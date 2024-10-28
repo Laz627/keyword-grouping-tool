@@ -1,107 +1,142 @@
-import streamlit as st
 import pandas as pd
 from keybert import KeyBERT
 from collections import Counter
 import re
 
-# Initialize the KeyBERT model
-kw_model = KeyBERT()
+def cluster_keywords(keywords, seed_keyword=''):
+    """
+    Clusters keywords into meaningful groups based on keyphrase extraction.
 
-st.title("Keyword Theme Extraction with Conditional Seed Keyword Removal")
-st.markdown("Upload a CSV file with a 'Keywords' column and specify a seed keyword to refine theme extraction.")
+    Parameters:
+    - keywords: list of strings or pandas DataFrame with a 'Keywords' column.
+    - seed_keyword: optional string to provide context for theme extraction.
 
-# Optional input for seed keyword
-seed_keyword = st.text_input("Enter Seed Keyword for Context (Optional)", value="")
+    Returns:
+    - pandas DataFrame with original keywords and assigned themes.
+    """
+    # Validate input
+    if isinstance(keywords, list):
+        df = pd.DataFrame({'Keywords': keywords})
+    elif isinstance(keywords, pd.DataFrame):
+        if 'Keywords' not in keywords.columns:
+            raise ValueError("DataFrame must contain a 'Keywords' column.")
+        df = keywords.copy()
+    else:
+        raise TypeError("Input must be a list of strings or a pandas DataFrame with a 'Keywords' column.")
+    
+    # Initialize KeyBERT model
+    kw_model = KeyBERT()
+    
+    # Function to extract keyphrases (n-grams) from text
+    def extract_keyphrases(text):
+        """
+        Extracts keyphrases (unigrams, bigrams, trigrams) from text using KeyBERT.
 
-uploaded_file = st.file_uploader("Upload your CSV file", type=["csv", "xls", "xlsx"])
+        Parameters:
+        - text: string to extract keyphrases from.
 
-# Function to apply KeyBERT and extract unigrams, bigrams, and trigrams with progress updates
-def apply_keybert(df):
-    if 'Keywords' not in df.columns:
-        st.error("Error: The dataframe must contain a column named 'Keywords'.")
-        return None
-
-    # Progress bar for KeyBERT extraction
-    progress_bar = st.progress(0)
-    total_keywords = len(df)
-
-    # Extract n-grams using KeyBERT
-    def extract_ngram(text, ngram_range):
-        keywords = kw_model.extract_keywords(text, keyphrase_ngram_range=ngram_range, stop_words='english')
-        return keywords[0][0] if keywords else ""  # Return the keyword or an empty string if none found
-
-    # Apply KeyBERT for unigrams, bigrams, and trigrams with progress updates
-    df['Core (1-gram)'] = ""
-    df['Core (2-gram)'] = ""
-    df['Core (3-gram)'] = ""
-    for idx, row in df.iterrows():
-        df.at[idx, 'Core (1-gram)'] = extract_ngram(row['Keywords'], (1, 1))
-        df.at[idx, 'Core (2-gram)'] = extract_ngram(row['Keywords'], (2, 2))
-        df.at[idx, 'Core (3-gram)'] = extract_ngram(row['Keywords'], (3, 3))
-        progress_bar.progress((idx + 1) / total_keywords)  # Update progress bar
-
-    return df
-
-# Function to detect themes with conditional removal of the seed keyword
-def detect_themes(df, seed_keyword=""):
-    # Remove the seed keyword conditionally from bi-grams and tri-grams
+        Returns:
+        - dict with n-grams as keys and extracted phrases as values.
+        """
+        keyphrases = {}
+        for n in range(1, 4):
+            keywords = kw_model.extract_keywords(text, keyphrase_ngram_range=(n, n), stop_words='english')
+            keyphrases[f'{n}-gram'] = keywords[0][0] if keywords else ''
+        return keyphrases
+    
+    # Apply keyphrase extraction to each keyword
+    df['Keyphrases'] = df['Keywords'].apply(extract_keyphrases)
+    
+    # Function to clean keyphrases by removing the seed keyword if provided
     def clean_phrase(phrase):
+        """
+        Removes the seed keyword from the phrase if present.
+
+        Parameters:
+        - phrase: string to clean.
+
+        Returns:
+        - cleaned phrase.
+        """
         if seed_keyword:
-            # Remove the seed keyword only if there are enough remaining words
             pattern = rf'\b{re.escape(seed_keyword)}\b'
             cleaned = re.sub(pattern, '', phrase, flags=re.IGNORECASE).strip()
-            return cleaned if len(cleaned.split()) > 1 else phrase  # Retain phrase if too short after removal
+            return cleaned if len(cleaned.split()) > 0 else phrase  # Retain phrase if empty after removal
         return phrase
-
-    df['Cleaned (2-gram)'] = df['Core (2-gram)'].apply(clean_phrase)
-    df['Cleaned (3-gram)'] = df['Core (3-gram)'].apply(clean_phrase)
-
-    # Combine cleaned bi-grams and tri-grams into a single list to detect frequent terms
-    all_phrases = df['Cleaned (2-gram)'].tolist() + df['Cleaned (3-gram)'].tolist()
-    word_counts = Counter([word for phrase in all_phrases for word in re.findall(r'\w+', phrase.lower())])
-
-    # Define themes based on the most common non-seed terms
-    common_terms = [term for term, freq in word_counts.items() if freq > 1]
-
-    # Function to categorize each row based on detected themes, with selective seed keyword removal
-    def categorize_theme(row):
-        for term in common_terms:
-            if re.search(rf'\b{term}\b', row['Cleaned (3-gram)'], re.IGNORECASE):
-                return term.capitalize()  # Use the frequent term as the theme
-        return "Other"  # Default if no common term is found
-
-    # Add a secondary progress bar for theme detection
-    theme_progress_bar = st.progress(0)
-    for idx in range(len(df)):
-        df.at[idx, 'Theme'] = categorize_theme(df.iloc[idx])
-        theme_progress_bar.progress((idx + 1) / len(df))
-
-    return df
-
-if uploaded_file:
-    # Load the uploaded file into a DataFrame
-    if uploaded_file.name.endswith('.csv'):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
     
-    # Apply KeyBERT to extract themes with progress
-    with st.spinner("Extracting themes with KeyBERT..."):
-        df_with_keybert = apply_keybert(df)
+    # Clean keyphrases in the DataFrame
+    df['Cleaned Keyphrases'] = df['Keyphrases'].apply(
+        lambda kp_dict: {k: clean_phrase(v) for k, v in kp_dict.items()}
+    )
     
-    if df_with_keybert is not None:
-        # Automatically detect themes with conditional seed keyword removal
-        with st.spinner("Categorizing themes..."):
-            df_with_themes = detect_themes(df_with_keybert, seed_keyword)
+    # Initialize an empty dictionary to store clusters
+    clusters = {}
+    
+    # Recursive function to cluster keywords
+    def recursive_cluster(dataframe, depth=0, max_depth=5):
+        """
+        Recursively clusters the keywords based on common terms in keyphrases.
 
-        st.write("Extracted Themes for Keywords:")
-        st.dataframe(df_with_themes[['Keywords', 'Core (1-gram)', 'Core (2-gram)', 'Core (3-gram)', 'Theme']])
+        Parameters:
+        - dataframe: pandas DataFrame with 'Keywords' and 'Cleaned Keyphrases' columns.
+        - depth: current depth of recursion.
+        - max_depth: maximum depth to prevent infinite recursion.
 
-        # Option to download the modified DataFrame
-        csv = df_with_themes.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Download Extracted Themes CSV",
-            data=csv,
-            file_name="keywords_with_themes.csv",
-            mime="text/csv"
-        )
+        Returns:
+        - None (clusters are stored in the 'clusters' dictionary).
+        """
+        # Base case: stop recursion if depth limit is reached or dataframe is small
+        if depth >= max_depth or len(dataframe) <= 1:
+            # Assign a unique cluster label
+            cluster_label = f"Cluster_{len(clusters)+1}"
+            clusters[cluster_label] = dataframe['Keywords'].tolist()
+            return
+        
+        # Combine all cleaned keyphrases to find common terms
+        all_phrases = []
+        for kp_dict in dataframe['Cleaned Keyphrases']:
+            all_phrases.extend(kp_dict.values())
+        
+        # Count term frequencies
+        word_counts = Counter()
+        for phrase in all_phrases:
+            words = re.findall(r'\w+', phrase.lower())
+            word_counts.update(words)
+        
+        # If no words found, assign to a cluster
+        if not word_counts:
+            cluster_label = f"Cluster_{len(clusters)+1}"
+            clusters[cluster_label] = dataframe['Keywords'].tolist()
+            return
+        
+        # Find the most common term
+        common_term, freq = word_counts.most_common(1)[0]
+        # If no term is common enough, assign to a cluster
+        if freq < 2:
+            cluster_label = f"Cluster_{len(clusters)+1}"
+            clusters[cluster_label] = dataframe['Keywords'].tolist()
+            return
+        
+        # Split dataframe into two groups: contains the common term, and does not
+        contains_term = dataframe[dataframe['Cleaned Keyphrases'].apply(
+            lambda kp_dict: any(re.search(rf'\b{common_term}\b', phrase, re.IGNORECASE) for phrase in kp_dict.values())
+        )]
+        does_not_contain_term = dataframe.drop(contains_term.index)
+        
+        # Recursively cluster each subgroup
+        recursive_cluster(contains_term, depth+1, max_depth)
+        recursive_cluster(does_not_contain_term, depth+1, max_depth)
+    
+    # Start recursive clustering from the top level
+    recursive_cluster(df)
+    
+    # Assign cluster labels to the original DataFrame
+    cluster_assignments = {}
+    for cluster_label, keywords_list in clusters.items():
+        for keyword in keywords_list:
+            cluster_assignments[keyword] = cluster_label
+    
+    df['Cluster'] = df['Keywords'].map(cluster_assignments)
+    
+    # Return the DataFrame with clusters
+    return df[['Keywords', 'Cluster']]
