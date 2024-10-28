@@ -3,20 +3,19 @@ import pandas as pd
 from keybert import KeyBERT
 from collections import Counter
 import re
-import time  # For simulating progress
 
 # Initialize the KeyBERT model
 kw_model = KeyBERT()
 
-st.title("Keyword Theme Extraction with Progress Updates")
-st.markdown("Upload a CSV file with a 'Keywords' column and optionally specify a seed keyword to exclude it from theme extraction.")
+st.title("Keyword Theme Extraction with Conditional Seed Keyword Removal")
+st.markdown("Upload a CSV file with a 'Keywords' column and specify a seed keyword to refine theme extraction.")
 
 # Optional input for seed keyword
-seed_keyword = st.text_input("Enter Seed Keyword to Exclude (Optional)", value="")
+seed_keyword = st.text_input("Enter Seed Keyword for Context (Optional)", value="")
 
 uploaded_file = st.file_uploader("Upload your CSV file", type=["csv", "xls", "xlsx"])
 
-# Function to apply KeyBERT and extract unigrams, bigrams, and trigrams with a progress bar
+# Function to apply KeyBERT and extract unigrams, bigrams, and trigrams with progress updates
 def apply_keybert(df):
     if 'Keywords' not in df.columns:
         st.error("Error: The dataframe must contain a column named 'Keywords'.")
@@ -43,13 +42,15 @@ def apply_keybert(df):
 
     return df
 
-# Function to detect themes based on frequent terms, excluding the seed keyword
+# Function to detect themes with conditional removal of the seed keyword
 def detect_themes(df, seed_keyword=""):
-    # Remove the seed keyword from bi-grams and tri-grams to avoid bias
+    # Remove the seed keyword conditionally from bi-grams and tri-grams
     def clean_phrase(phrase):
         if seed_keyword:
+            # Remove the seed keyword only if there are enough remaining words
             pattern = rf'\b{re.escape(seed_keyword)}\b'
-            return re.sub(pattern, '', phrase, flags=re.IGNORECASE).strip()
+            cleaned = re.sub(pattern, '', phrase, flags=re.IGNORECASE).strip()
+            return cleaned if len(cleaned.split()) > 1 else phrase  # Retain phrase if too short after removal
         return phrase
 
     df['Cleaned (2-gram)'] = df['Core (2-gram)'].apply(clean_phrase)
@@ -62,7 +63,7 @@ def detect_themes(df, seed_keyword=""):
     # Define themes based on the most common non-seed terms
     common_terms = [term for term, freq in word_counts.items() if freq > 1]
 
-    # Function to categorize each row based on detected themes, excluding the seed keyword
+    # Function to categorize each row based on detected themes, with selective seed keyword removal
     def categorize_theme(row):
         for term in common_terms:
             if re.search(rf'\b{term}\b', row['Cleaned (3-gram)'], re.IGNORECASE):
@@ -89,7 +90,7 @@ if uploaded_file:
         df_with_keybert = apply_keybert(df)
     
     if df_with_keybert is not None:
-        # Automatically detect themes, excluding the seed keyword, with a progress bar
+        # Automatically detect themes with conditional seed keyword removal
         with st.spinner("Categorizing themes..."):
             df_with_themes = detect_themes(df_with_keybert, seed_keyword)
 
