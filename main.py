@@ -24,13 +24,13 @@ def cluster_keywords(df, seed_keyword=''):
     - seed_keyword: optional string to provide context for theme extraction.
 
     Returns:
-    - pandas DataFrame with original keywords and assigned themes.
+    - pandas DataFrame with original keywords, extracted n-grams, and assigned clusters.
     """
     # Validate input
     if 'Keywords' not in df.columns:
         st.error("Error: The dataframe must contain a column named 'Keywords'.")
         return None
-    
+
     # Function to extract keyphrases (n-grams) from text
     def extract_keyphrases(text):
         """
@@ -48,8 +48,14 @@ def cluster_keywords(df, seed_keyword=''):
             keyphrases[f'{n}-gram'] = keywords[0][0] if keywords else ''
         return keyphrases
 
-    # Apply keyphrase extraction to each keyword
-    df['Keyphrases'] = df['Keywords'].apply(extract_keyphrases)
+    # Apply keyphrase extraction to each keyword with progress
+    progress_bar = st.progress(0)
+    total = len(df)
+    df['Keyphrases'] = ''
+    for idx, row in df.iterrows():
+        df.at[idx, 'Keyphrases'] = extract_keyphrases(row['Keywords'])
+        progress_bar.progress((idx + 1) / total)
+    progress_bar.empty()
 
     # Function to clean keyphrases by removing the seed keyword if provided
     def clean_phrase(phrase):
@@ -73,76 +79,53 @@ def cluster_keywords(df, seed_keyword=''):
         lambda kp_dict: {k: clean_phrase(v) for k, v in kp_dict.items()}
     )
 
-    # Initialize an empty dictionary to store clusters
-    clusters = {}
+    # Combine all cleaned keyphrases to find common terms
+    all_phrases = []
+    for kp_dict in df['Cleaned Keyphrases']:
+        all_phrases.extend(kp_dict.values())
 
-    # Recursive function to cluster keywords
-    def recursive_cluster(dataframe, depth=0, max_depth=5):
-        """
-        Recursively clusters the keywords based on common terms in keyphrases.
+    # Count term frequencies
+    word_counts = Counter()
+    for phrase in all_phrases:
+        words = re.findall(r'\w+', phrase.lower())
+        word_counts.update(words)
 
-        Parameters:
-        - dataframe: pandas DataFrame with 'Keywords' and 'Cleaned Keyphrases' columns.
-        - depth: current depth of recursion.
-        - max_depth: maximum depth to prevent infinite recursion.
+    # Remove seed_keyword from counts if present
+    if seed_keyword.lower() in word_counts:
+        del word_counts[seed_keyword.lower()]
 
-        Returns:
-        - None (clusters are stored in the 'clusters' dictionary).
-        """
-        # Base case: stop recursion if depth limit is reached or dataframe is small
-        if depth >= max_depth or len(dataframe) <= 1:
-            # Assign a unique cluster label
-            cluster_label = f"Cluster_{len(clusters)+1}"
-            clusters[cluster_label] = dataframe['Keywords'].tolist()
-            return
+    # Get common terms that appear more than once
+    common_terms = [term for term, freq in word_counts.items() if freq > 1]
 
-        # Combine all cleaned keyphrases to find common terms
-        all_phrases = []
-        for kp_dict in dataframe['Cleaned Keyphrases']:
-            all_phrases.extend(kp_dict.values())
+    # If no common terms, assign 'Other' cluster
+    if not common_terms:
+        df['Cluster'] = 'Other'
+    else:
+        # Assign clusters based on common terms
+        def assign_cluster(row):
+            for term in common_terms:
+                for phrase in row['Cleaned Keyphrases'].values():
+                    if re.search(rf'\b{term}\b', phrase, re.IGNORECASE):
+                        return term.capitalize()
+            return 'Other'
 
-        # Count term frequencies
-        word_counts = Counter()
-        for phrase in all_phrases:
-            words = re.findall(r'\w+', phrase.lower())
-            word_counts.update(words)
+        # Apply with progress
+        progress_bar = st.progress(0)
+        df['Cluster'] = ''
+        for idx, row in df.iterrows():
+            df.at[idx, 'Cluster'] = assign_cluster(row)
+            progress_bar.progress((idx + 1) / total)
+        progress_bar.empty()
 
-        # If no words found, assign to a cluster
-        if not word_counts:
-            cluster_label = f"Cluster_{len(clusters)+1}"
-            clusters[cluster_label] = dataframe['Keywords'].tolist()
-            return
+    # Include the n-grams in the output
+    df['Core (1-gram)'] = df['Keyphrases'].apply(lambda x: x['1-gram'])
+    df['Core (2-gram)'] = df['Keyphrases'].apply(lambda x: x['2-gram'])
+    df['Core (3-gram)'] = df['Keyphrases'].apply(lambda x: x['3-gram'])
 
-        # Find the most common term
-        common_term, freq = word_counts.most_common(1)[0]
-        # If no term is common enough, assign to a cluster
-        if freq < 2:
-            cluster_label = f"Cluster_{len(clusters)+1}"
-            clusters[cluster_label] = dataframe['Keywords'].tolist()
-            return
+    # Reorder columns for clarity
+    output_columns = ['Keywords', 'Core (1-gram)', 'Core (2-gram)', 'Core (3-gram)', 'Cluster']
 
-        # Split dataframe into two groups: contains the common term, and does not
-        contains_term = dataframe[dataframe['Cleaned Keyphrases'].apply(
-            lambda kp_dict: any(re.search(rf'\b{common_term}\b', phrase, re.IGNORECASE) for phrase in kp_dict.values())
-        )]
-        does_not_contain_term = dataframe.drop(contains_term.index)
-
-        # Recursively cluster each subgroup
-        recursive_cluster(contains_term, depth+1, max_depth)
-        recursive_cluster(does_not_contain_term, depth+1, max_depth)
-
-    # Start recursive clustering from the top level
-    recursive_cluster(df)
-
-    # Assign cluster labels to the original DataFrame
-    cluster_assignments = {}
-    for cluster_label, keywords_list in clusters.items():
-        for keyword in keywords_list:
-            cluster_assignments[keyword] = cluster_label
-
-    df['Cluster'] = df['Keywords'].map(cluster_assignments)
-
-    return df[['Keywords', 'Cluster']]
+    return df[output_columns]
 
 if uploaded_file:
     # Load the uploaded file into a DataFrame
