@@ -7,9 +7,6 @@ from sklearn.metrics import silhouette_score
 import numpy as np
 import re
 
-# Initialize the KeyBERT model
-kw_model = KeyBERT()
-
 st.title("Keyword Clustering Using Semantic Similarity")
 st.markdown("Upload a CSV file with a 'Keywords' column and specify a seed keyword to refine theme extraction.")
 
@@ -93,12 +90,7 @@ def cluster_keywords_semantically(df, seed_keyword='', num_clusters=10):
         # Extract key terms from cluster keywords
         all_terms = ' '.join(cluster_keywords)
         # Use KeyBERT to extract representative terms for the cluster
-        keywords = kw_model.extract_keywords(
-            all_terms,
-            keyphrase_ngram_range=(1, 2),
-            stop_words='english',
-            top_n=3
-        )
+        keywords = kw_model.extract_keywords(all_terms, keyphrase_ngram_range=(1, 2), stop_words='english', top_n=3)
         cluster_name = ', '.join([kw[0] for kw in keywords])
         cluster_names[cluster_num] = cluster_name if cluster_name else f"Cluster {cluster_num}"
 
@@ -118,20 +110,10 @@ if uploaded_file:
         df = pd.read_excel(uploaded_file)
 
     # Input for number of clusters
-    num_clusters = st.number_input(
-        "Enter the number of clusters to form",
-        min_value=2,
-        max_value=50,
-        value=10,
-        step=1
-    )
+    num_clusters = st.number_input("Enter the number of clusters to form", min_value=2, max_value=50, value=10, step=1)
 
     with st.spinner("Clustering keywords..."):
-        df_with_clusters = cluster_keywords_semantically(
-            df,
-            seed_keyword,
-            num_clusters=num_clusters
-        )
+        df_with_clusters = cluster_keywords_semantically(df, seed_keyword, num_clusters=num_clusters)
 
     if df_with_clusters is not None:
         st.write("Clustered Keywords:")
