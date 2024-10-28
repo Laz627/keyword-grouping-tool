@@ -5,3 +5,4 @@ sentence-transformers==2.2.2
 scikit-learn==1.2.2
 nltk==3.8.1
 transformers==4.30.2
+huggingface-hub==0.16.4  # Required by sentence-transformers
