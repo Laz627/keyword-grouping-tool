@@ -1,9 +1,7 @@
-streamlit==1.25.0  # Example version, update based on what worked
-pandas==1.5.3
-numpy==1.23.5
+streamlit==1.24.0
+pandas==2.0.3
+keybert==0.7.0
+sentence-transformers==2.2.2
 scikit-learn==1.2.2
-nltk==3.7
-sentence-transformers>=2.2.2  # For using MiniLM or other SentenceTransformer models
-torch                   # Required by sentence-transformers for embeddings (PyTorch backend)
-transformers            # Additional library for using advanced transformer models
-openai
+nltk==3.8.1
+transformers==4.30.2
