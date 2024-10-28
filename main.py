@@ -3,11 +3,12 @@ import pandas as pd
 from keybert import KeyBERT
 from collections import Counter
 import re
+import time  # For simulating progress
 
 # Initialize the KeyBERT model
 kw_model = KeyBERT()
 
-st.title("Keyword Theme Extraction without Seed Keyword Influence")
+st.title("Keyword Theme Extraction with Progress Updates")
 st.markdown("Upload a CSV file with a 'Keywords' column and optionally specify a seed keyword to exclude it from theme extraction.")
 
 # Optional input for seed keyword
@@ -15,21 +16,30 @@ seed_keyword = st.text_input("Enter Seed Keyword to Exclude (Optional)", value="
 
 uploaded_file = st.file_uploader("Upload your CSV file", type=["csv", "xls", "xlsx"])
 
-# Function to apply KeyBERT and extract unigrams, bigrams, and trigrams
+# Function to apply KeyBERT and extract unigrams, bigrams, and trigrams with a progress bar
 def apply_keybert(df):
     if 'Keywords' not in df.columns:
         st.error("Error: The dataframe must contain a column named 'Keywords'.")
         return None
+
+    # Progress bar for KeyBERT extraction
+    progress_bar = st.progress(0)
+    total_keywords = len(df)
 
     # Extract n-grams using KeyBERT
     def extract_ngram(text, ngram_range):
         keywords = kw_model.extract_keywords(text, keyphrase_ngram_range=ngram_range, stop_words='english')
         return keywords[0][0] if keywords else ""  # Return the keyword or an empty string if none found
 
-    # Apply KeyBERT for unigrams, bigrams, and trigrams
-    df['Core (1-gram)'] = df['Keywords'].apply(lambda x: extract_ngram(x, (1, 1)) if len(x) > 0 else "")
-    df['Core (2-gram)'] = df['Keywords'].apply(lambda x: extract_ngram(x, (2, 2)) if len(x) > 0 else "")
-    df['Core (3-gram)'] = df['Keywords'].apply(lambda x: extract_ngram(x, (3, 3)) if len(x) > 0 else "")
+    # Apply KeyBERT for unigrams, bigrams, and trigrams with progress updates
+    df['Core (1-gram)'] = ""
+    df['Core (2-gram)'] = ""
+    df['Core (3-gram)'] = ""
+    for idx, row in df.iterrows():
+        df.at[idx, 'Core (1-gram)'] = extract_ngram(row['Keywords'], (1, 1))
+        df.at[idx, 'Core (2-gram)'] = extract_ngram(row['Keywords'], (2, 2))
+        df.at[idx, 'Core (3-gram)'] = extract_ngram(row['Keywords'], (3, 3))
+        progress_bar.progress((idx + 1) / total_keywords)  # Update progress bar
 
     return df
 
@@ -50,7 +60,7 @@ def detect_themes(df, seed_keyword=""):
     word_counts = Counter([word for phrase in all_phrases for word in re.findall(r'\w+', phrase.lower())])
 
     # Define themes based on the most common non-seed terms
-    common_terms = [term for term, freq in word_counts.items() if freq > 1]  # Adjust threshold if needed
+    common_terms = [term for term, freq in word_counts.items() if freq > 1]
 
     # Function to categorize each row based on detected themes, excluding the seed keyword
     def categorize_theme(row):
@@ -59,7 +69,12 @@ def detect_themes(df, seed_keyword=""):
                 return term.capitalize()  # Use the frequent term as the theme
         return "Other"  # Default if no common term is found
 
-    df['Theme'] = df.apply(categorize_theme, axis=1)
+    # Add a secondary progress bar for theme detection
+    theme_progress_bar = st.progress(0)
+    for idx in range(len(df)):
+        df.at[idx, 'Theme'] = categorize_theme(df.iloc[idx])
+        theme_progress_bar.progress((idx + 1) / len(df))
+
     return df
 
 if uploaded_file:
@@ -69,12 +84,14 @@ if uploaded_file:
     else:
         df = pd.read_excel(uploaded_file)
     
-    # Apply KeyBERT to extract themes
-    df_with_keybert = apply_keybert(df)
+    # Apply KeyBERT to extract themes with progress
+    with st.spinner("Extracting themes with KeyBERT..."):
+        df_with_keybert = apply_keybert(df)
     
     if df_with_keybert is not None:
-        # Automatically detect themes, excluding the seed keyword
-        df_with_themes = detect_themes(df_with_keybert, seed_keyword)
+        # Automatically detect themes, excluding the seed keyword, with a progress bar
+        with st.spinner("Categorizing themes..."):
+            df_with_themes = detect_themes(df_with_keybert, seed_keyword)
 
         st.write("Extracted Themes for Keywords:")
         st.dataframe(df_with_themes[['Keywords', 'Core (1-gram)', 'Core (2-gram)', 'Core (3-gram)', 'Theme']])
