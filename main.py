@@ -1,65 +1,52 @@
 import streamlit as st
 import pandas as pd
 from keybert import KeyBERT
-from sklearn.cluster import KMeans
-from sentence_transformers import SentenceTransformer
 
-# Initialize the embedding model and KeyBERT model
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+# Initialize the KeyBERT model
 kw_model = KeyBERT()
 
-st.title("Keyword Clustering and Classification with KeyBERT")
-st.markdown("Upload a CSV with a 'Keywords' column. The tool will categorize based on semantic similarity, optionally using a seed keyword for context.")
+st.title("Keyword Theme Extraction with KeyBERT")
+st.markdown("Upload a CSV file with a 'Keywords' column. The tool will extract relevant themes using KeyBERT.")
 
-# Optional input for seed keyword
-seed_keyword = st.text_input("Enter Seed Keyword (Optional)", value="")
+uploaded_file = st.file_uploader("Upload your CSV file", type=["csv", "xls", "xlsx"])
 
-uploaded_file = st.file_uploader("Upload your CSV file with a 'Keywords' column", type=["csv"])
+# Function to apply KeyBERT and extract unigrams, bigrams, and trigrams
+def apply_keybert(df):
+    if 'Keywords' not in df.columns:
+        st.error("Error: The dataframe must contain a column named 'Keywords'.")
+        return None
 
-# Slider for number of clusters
-num_clusters = st.slider("Select Number of Clusters", min_value=2, max_value=50, value=10, step=1)
+    # Function to extract n-grams using KeyBERT
+    def extract_ngram(text, ngram_range):
+        keywords = kw_model.extract_keywords(text, keyphrase_ngram_range=ngram_range, stop_words='english')
+        return keywords[0][0] if keywords else ""  # Return the keyword or an empty string if none found
+
+    # Apply KeyBERT for unigrams, bigrams, and trigrams
+    df['Core (1-gram)'] = df['Keywords'].apply(lambda x: extract_ngram(x, (1, 1)) if len(x) > 0 else "")
+    df['Core (2-gram)'] = df['Keywords'].apply(lambda x: extract_ngram(x, (2, 2)) if len(x) > 0 else "")
+    df['Core (3-gram)'] = df['Keywords'].apply(lambda x: extract_ngram(x, (3, 3)) if len(x) > 0 else "")
+
+    return df
 
 if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    if "Keywords" not in df.columns:
-        st.error("CSV must contain a 'Keywords' column.")
+    # Load the uploaded file into a DataFrame
+    if uploaded_file.name.endswith('.csv'):
+        df = pd.read_csv(uploaded_file)
     else:
-        # Generate embeddings for clustering
-        embeddings = embedding_model.encode(df['Keywords'].tolist())
-        
-        # Perform clustering
-        kmeans = KMeans(n_clusters=num_clusters, random_state=42)
-        df['Cluster'] = kmeans.fit_predict(embeddings)
+        df = pd.read_excel(uploaded_file)
+    
+    # Apply KeyBERT and display results
+    df_with_keybert = apply_keybert(df)
+    
+    if df_with_keybert is not None:
+        st.write("Extracted Themes for Keywords:")
+        st.dataframe(df_with_keybert)
 
-        # Extract cluster labels using KeyBERT for unigram, bigram, and trigram
-        cluster_labels = []
-        for cluster_num in range(num_clusters):
-            cluster_keywords = df[df['Cluster'] == cluster_num]['Keywords'].tolist()
-            
-            # Combine cluster keywords and add seed keyword if provided
-            combined_text = " ".join(cluster_keywords)
-            if seed_keyword:  # Only add seed keyword if provided
-                combined_text += " " + seed_keyword
-            
-            # Generate labels for unigram, bigram, and trigram
-            unigrams = kw_model.extract_keywords(combined_text, keyphrase_ngram_range=(1, 1), stop_words='english', top_n=1)
-            bigrams = kw_model.extract_keywords(combined_text, keyphrase_ngram_range=(2, 2), stop_words='english', top_n=1)
-            trigrams = kw_model.extract_keywords(combined_text, keyphrase_ngram_range=(3, 3), stop_words='english', top_n=1)
-
-            cluster_labels.append({
-                'Cluster': cluster_num,
-                'Unigram Label': unigrams[0][0] if unigrams else "N/A",
-                'Bigram Label': bigrams[0][0] if bigrams else "N/A",
-                'Trigram Label': trigrams[0][0] if trigrams else "N/A"
-            })
-
-        cluster_labels_df = pd.DataFrame(cluster_labels)
-        df = pd.merge(df, cluster_labels_df, on="Cluster", how="left")
-
-        # Show DataFrame with cluster names
-        st.write("Clustered Keywords with Labels:")
-        st.dataframe(df)
-        
-        # Option to download the labeled clusters
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(label="Download Clustered Keywords CSV", data=csv, file_name="clustered_keywords.csv", mime="text/csv")
+        # Option to download the modified DataFrame
+        csv = df_with_keybert.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download Extracted Themes CSV",
+            data=csv,
+            file_name="keywords_with_themes.csv",
+            mime="text/csv"
+        )
