@@ -31,6 +31,11 @@ def cluster_keywords(df, seed_keyword=''):
         st.error("Error: The dataframe must contain a column named 'Keywords'.")
         return None
 
+    # Prepare the list of words to exclude (seed keyword and its components)
+    seed_words = []
+    if seed_keyword:
+        seed_words = seed_keyword.lower().split()
+
     # Function to extract keyphrases (n-grams) from text
     def extract_keyphrases(text):
         """
@@ -57,10 +62,10 @@ def cluster_keywords(df, seed_keyword=''):
         progress_bar.progress((idx + 1) / total)
     progress_bar.empty()
 
-    # Function to clean keyphrases by removing the seed keyword if provided
+    # Function to clean keyphrases by removing the seed keyword and its component words
     def clean_phrase(phrase):
         """
-        Removes the seed keyword from the phrase if present.
+        Removes the seed keyword and its component words from the phrase if present.
 
         Parameters:
         - phrase: string to clean.
@@ -68,11 +73,18 @@ def cluster_keywords(df, seed_keyword=''):
         Returns:
         - cleaned phrase.
         """
+        cleaned = phrase
         if seed_keyword:
+            # Remove the seed keyword phrase
             pattern = rf'\b{re.escape(seed_keyword)}\b'
-            cleaned = re.sub(pattern, '', phrase, flags=re.IGNORECASE).strip()
-            return cleaned if len(cleaned.split()) > 0 else phrase  # Retain phrase if empty after removal
-        return phrase
+            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+        if seed_words:
+            # Remove individual seed words
+            for word in seed_words:
+                pattern = rf'\b{re.escape(word)}\b'
+                cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+        cleaned = cleaned.strip()
+        return cleaned if len(cleaned.split()) > 0 else phrase  # Retain original phrase if empty after removal
 
     # Clean keyphrases in the DataFrame
     df['Cleaned Keyphrases'] = df['Keyphrases'].apply(
@@ -88,11 +100,9 @@ def cluster_keywords(df, seed_keyword=''):
     word_counts = Counter()
     for phrase in all_phrases:
         words = re.findall(r'\w+', phrase.lower())
+        # Exclude seed words from counts
+        words = [word for word in words if word not in seed_words]
         word_counts.update(words)
-
-    # Remove seed_keyword from counts if present
-    if seed_keyword.lower() in word_counts:
-        del word_counts[seed_keyword.lower()]
 
     # Get common terms that appear more than once
     common_terms = [term for term, freq in word_counts.items() if freq > 1]
