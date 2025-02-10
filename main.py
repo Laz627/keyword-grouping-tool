@@ -239,10 +239,7 @@ This tool extracts candidate themes and performs full tagging on keywords using 
 - **Candidate Theme Extraction:**  
   Extract candidate keyphrases (and their frequencies) from your keywords, preview the resulting tags, and optionally view clustering.
 - **Full Tagging:**  
-  Process each keyword to assign:
-    - **A:Tag** (e.g., door/window),
-    - **B:Tag**, and
-    - **C:Tag**.
+  Process each keyword to assign them to unique tags / categories for easier trend research.
   
 After full tagging, a summary report by the **A:Tag & B:Tag combination** is displayed.
   
