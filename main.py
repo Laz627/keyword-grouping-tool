@@ -17,6 +17,10 @@ from nltk.stem import WordNetLemmatizer
 nltk.download('punkt')
 nltk.download('averaged_perceptron_tagger')
 nltk.download('wordnet')
+nltk.download('stopwords')
+from nltk.corpus import stopwords
+stop_words = set(stopwords.words('english'))
+
 lemmatizer = WordNetLemmatizer()
 
 # Initialize KeyBERT
@@ -28,7 +32,7 @@ kw_model = KeyBERT(model=embedding_model)
 ###
 
 def normalize_token(token):
-    """Lowercase & lemmatize (noun mode), also convert 'vs' -> 'v'."""
+    """Lowercase & lemmatize (noun mode); also convert 'vs' -> 'v'."""
     token = token.lower()
     if token == "vs":
         token = "v"
@@ -44,7 +48,7 @@ def normalize_phrase(phrase):
 
 def canonicalize_phrase(phrase):
     """
-    Remove unwanted tokens (e.g., "series") while preserving the original order.
+    Remove unwanted tokens (e.g. "series") while preserving original order.
     E.g., 'pella 350 series' becomes 'pella 350'.
     """
     tokens = word_tokenize(phrase.lower())
@@ -53,59 +57,61 @@ def canonicalize_phrase(phrase):
 
 def pick_tags_pos_based(tokens, user_a_tags):
     """
-    Given a list of candidate tokens (in original order), assign single-word tags for A, B, and C as follows:
+    Given a list of candidate tokens (in original order), assign one-word tags for A, B, and C as follows:
     
     1. A:Tag  
-       - Scan the tokens (in order) for one that “contains” an allowed A:tag (or vice‐versa).
-       - If found, remove that token (from a flattened list) and set A:Tag to the allowed tag.
-       - If not found, force A:Tag to "general-other" (without removing any tokens).
+       - Scan the (flattened) tokens for one that “contains” an allowed A:tag (or vice‐versa).
+       - If found, remove that token and set A:Tag to the allowed tag.
+       - If none is found, force A:Tag to "general-other" (without removing any token).
     
     2. B:Tag and C:Tag  
-       - First, flatten the token list in case any token has embedded spaces.
-       - Then, from the flattened tokens list, if at least two tokens exist, assign:
-             B:Tag = first token 
-             C:Tag = second token  
-         If only one token remains, assign it to B:Tag and leave C:Tag blank.
-         (Extra tokens beyond the first two are ignored.)
+       - Filter the remaining tokens by removing stopwords.
+       - If at least two tokens remain, assign B:Tag = first token and C:Tag = second token.
+       - If only one token remains, assign it to B:Tag and leave C:Tag blank.
     """
-    # First, flatten the list in case any token has embedded spaces.
+    # Flatten tokens in case any token contains embedded whitespace.
     flat_tokens = []
     for token in tokens:
         flat_tokens.extend(token.split())
-    
-    tokens_copy = flat_tokens[:]  # Work on a copy
+    tokens_copy = flat_tokens[:]  # work on a copy
+
     a_tag = None
+    a_index = None
     for i, token in enumerate(tokens_copy):
         for allowed in user_a_tags:
             if allowed in token or token in allowed:
                 a_tag = allowed
-                tokens_copy.pop(i)  # Remove the matching token
+                a_index = i
                 break
         if a_tag is not None:
             break
 
-    if a_tag is None:
+    if a_tag is not None:
+        tokens_copy.pop(a_index)
+    else:
         a_tag = "general-other"
 
-    tokens_copy = [t for t in tokens_copy if t.strip() != ""]
+    # Filter out stopwords from the remaining tokens.
+    filtered = [t for t in tokens_copy if t.lower() not in stop_words and t.strip() != ""]
 
-    if len(tokens_copy) >= 2:
-        b_tag = tokens_copy[0]
-        c_tag = tokens_copy[1]
-    elif len(tokens_copy) == 1:
-        b_tag = tokens_copy[0]
+    if len(filtered) >= 2:
+        b_tag = filtered[0]
+        c_tag = filtered[1]
+    elif len(filtered) == 1:
+        b_tag = filtered[0]
         c_tag = ""
     else:
         b_tag = ""
         c_tag = ""
+
     return a_tag, b_tag, c_tag
 
 def classify_keyword_three(keyword, seed, omitted_list, user_a_tags):
     """
-    Process a keyword string as follows:
+    Process a keyword string:
       1) Remove the seed (if provided) and any omitted phrases.
       2) Use KeyBERT to extract the top candidate keyphrase from the remaining text,
-         using an n-gram range of (1,4) so that up to four words can be returned.
+         using an n-gram range of (1,4) (up to four words).
       3) Normalize and canonicalize the candidate while preserving word order.
       4) Split the candidate into individual tokens and use pick_tags_pos_based() to assign A, B, and C tags.
          If no candidate is found, return ("general-other", "", "").
