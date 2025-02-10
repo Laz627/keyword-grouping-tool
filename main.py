@@ -241,7 +241,7 @@ This tool extracts candidate themes and performs full tagging on keywords using 
 - **Full Tagging:**  
   Process each keyword to assign them to unique tags / categories for easier trend research.
   
-After full tagging, a summary report by the **A:Tag & B:Tag combination** is displayed.
+After full tagging, a summary report by the A:Tag & B:Tag combination is displayed.
   
 **How to Use:**
 1. Upload a CSV/Excel file with a column named **Keywords**.
