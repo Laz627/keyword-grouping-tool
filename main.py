@@ -9,15 +9,16 @@ from nltk.stem import WordNetLemmatizer
 nltk.download('punkt')
 nltk.download('wordnet')
 
-# Initialize lemmatizer
+# Initialize NLTK lemmatizer
 lemmatizer = WordNetLemmatizer()
 
 # Define a small set of stopwords for our heuristic.
-STOPWORDS = {"the", "a", "an", "are", "is", "of", "and", "or", "how", "much", "do", "does", "be", "in", "to", "for", "on", "at"}
+STOPWORDS = {"the", "a", "an", "are", "is", "of", "and", "or", "how", "much",
+             "do", "does", "be", "in", "to", "for", "on", "at"}
 
 def omit_phrases(text, omitted_list):
     """
-    Lowercases the text and removes any occurrence of words in omitted_list.
+    Lowercases the text and removes any occurrence of any word in omitted_list.
     """
     result = text.lower()
     for omit in omitted_list:
@@ -27,32 +28,34 @@ def omit_phrases(text, omitted_list):
 
 def normalize_token(token):
     """
-    Lowercase and lemmatize a token (using noun mode).
+    Lowercases and lemmatizes a token (using noun mode) so that singular/plural forms match.
     """
     return lemmatizer.lemmatize(token.lower(), pos='n')
 
 def process_keyword_order(keyword, seed_keyword, omitted_list, user_a_tags):
     """
-    Processes a single keyword string based on word order.
+    Processes a single keyword based on word order and user-provided parameters.
     
     Steps:
       1. Lowercase the keyword.
       2. Remove the seed keyword (if provided) and any omitted phrases.
-      3. Tokenize and normalize each token.
-      4. Search for the first token that appears in the user-specified A:Tag set.
-         • If found, that normalized token becomes the Category.
-         • If not found, Category is "other-general" and other tags are empty.
-      5. From the remaining tokens (ignoring stopwords and tokens equal to the Category),
-         determine:
-         - B:Tag: if tokens after the A:tag exist, choose the last token; else, if tokens before exist, choose the last.
-         - C:Tag: join all tokens before the A:tag.
-         - D:Tag: join all tokens after the A:tag except for the token chosen for B:Tag.
-      6. Ensure that the same token does not appear in more than one bucket.
+      3. Tokenize and normalize (keep only alphanumeric tokens).
+      4. Search for the first occurrence of any token in the normalized user_a_tags set.
+         - If found, that token becomes the Category.
+         - If not found, return ("other-general", "", "", "").
+      5. Let tokens_before be all normalized tokens before the found A:Tag (ignoring stopwords and tokens equal to the Category).
+         – If tokens_before starts with a digit and "series" (e.g. ["250", "series", ...]), then assign the first two tokens as C:Tag and the remaining as extra_before.
+         – Otherwise, let C:Tag be all tokens_before.
+      6. Let tokens_after be all normalized tokens after the A:Tag (ignoring stopwords and tokens equal to the Category).
+         - If tokens_after exists, let B:Tag be the *last* token from tokens_after and D:Tag be the remaining tokens (joined in order).
+         - If tokens_after is empty and extra_before exists (from the special series rule), then let B:Tag be the last token of extra_before.
+      7. Finally, remove any duplicate tag (if B‑Tag equals Category, or if D‑Tag equals Category or B‑Tag, clear them).
     
     Returns a tuple: (Category, B_tag, C_tag, D_tag)
     """
     # Step 1: Lowercase the keyword.
     text = keyword.lower()
+    
     # Step 2: Remove seed keyword and omitted phrases.
     if seed_keyword:
         pattern = rf'\b{re.escape(seed_keyword.lower())}\b'
@@ -61,43 +64,52 @@ def process_keyword_order(keyword, seed_keyword, omitted_list, user_a_tags):
     
     # Step 3: Tokenize and normalize.
     tokens = word_tokenize(text)
-    norm_tokens = [normalize_token(t) for t in tokens if t.isalnum()]  # keep only alphanumeric tokens
-
+    norm_tokens = [normalize_token(t) for t in tokens if t.isalnum()]
+    
     # Step 4: Find the first occurrence of any user-specified A:Tag.
     idx_A = None
     category = ""
     for i, token in enumerate(norm_tokens):
         if token in user_a_tags:
             idx_A = i
-            category = token  # use the normalized token as category
+            category = token
             break
     if idx_A is None:
-        # No A:Tag found.
         return ("other-general", "", "", "")
     
-    # Step 5: Remove tokens equal to the category from further processing.
-    tokens_before = [t for t in norm_tokens[:idx_A] if t not in STOPWORDS and t != category]
-    tokens_after = [t for t in norm_tokens[idx_A+1:] if t not in STOPWORDS and t != category]
+    # Step 5: Tokens before the A:Tag.
+    raw_before = norm_tokens[:idx_A]
+    tokens_before = [t for t in raw_before if t not in STOPWORDS and t != category]
     
-    # Step 6: Determine B:Tag.
-    if tokens_after:
-        b_tag = tokens_after[-1]
-    elif tokens_before:
-        b_tag = tokens_before[-1]
+    # Special handling: if tokens_before starts with a number and "series"
+    extra_before = []
+    if len(tokens_before) >= 2 and tokens_before[0].isdigit() and tokens_before[1] == "series":
+        c_tag = " ".join(tokens_before[:2])
+        extra_before = tokens_before[2:]
     else:
-        b_tag = ""
-    # Ensure B:Tag is not the same as category.
+        c_tag = " ".join(tokens_before)
+    
+    # Step 6: Tokens after the A:Tag.
+    raw_after = norm_tokens[idx_A+1:]
+    tokens_after = [t for t in raw_after if t not in STOPWORDS and t != category]
+    if tokens_after:
+        # Use the last token as B:Tag and the rest as D:Tag.
+        b_tag = tokens_after[-1]
+        d_tag = " ".join(tokens_after[:-1]) if len(tokens_after) > 1 else ""
+    else:
+        if extra_before:
+            b_tag = extra_before[-1]
+            extra_before = extra_before[:-1]
+        else:
+            b_tag = ""
+        d_tag = ""
+    
+    # Step 7: Remove duplicates across buckets.
     if b_tag == category:
         b_tag = ""
-    
-    # Step 7: Determine C:Tag as all tokens before the A:tag.
-    c_tag = " ".join(tokens_before) if tokens_before else ""
-    
-    # Step 8: Determine D:Tag as tokens after the A:tag excluding the B:Tag.
-    if tokens_after:
-        d_tokens = tokens_after[:-1]  # remove the last token used for B:Tag
-        d_tag = " ".join(d_tokens) if d_tokens else ""
-    else:
+    if c_tag == category:
+        c_tag = ""
+    if d_tag == category or d_tag == b_tag:
         d_tag = ""
     
     return (category, b_tag, c_tag, d_tag)
@@ -111,22 +123,22 @@ st.markdown(
     **Instructions:**
     
     1. Upload a CSV/Excel file with a **Keywords** column.
-    2. (Optional) Enter a **Seed Keyword** to remove from each keyword.
+    2. (Optional) Enter a **Seed Keyword** to be removed from each keyword.
     3. Enter **Omit Phrases** (comma‑separated) that should be removed (for example, "pella, andersen").
     4. Enter one or more **A:Tags** (comma‑separated) that represent the classification keywords.
-       (For example, "window, door, price").
+       (For example, "window, door, price"). These will be normalized so that "window" and "windows" match.
     
-    The app will process each keyword by:
-      - Removing the seed and omitted words.
-      - Tokenizing and normalizing (so singular and plural forms match).
-      - Searching for the first occurrence of any A:Tag.
+    For each keyword, the app:
+      - Removes the seed/omitted words.
+      - Tokenizes and normalizes the text.
+      - Searches for the first occurrence of any A:Tag.
          • If found, that token becomes the **Category**.
-         • The token immediately following (if available) becomes the **B:Tag**.
-         • All tokens before the A:Tag (if any) become the **C:Tag**.
-         • All tokens after the A:Tag except the one chosen for B:Tag become the **D:Tag**.
+         • Tokens after the A:Tag (ignoring stopwords) yield:
+              – **B:Tag:** the last token in that group.
+              – **D:Tag:** the remaining tokens (if any) before that last token.
+         • Tokens before the A:Tag yield **C:Tag** (with a special rule if the beginning tokens indicate a series, e.g. "250 series").
       - If no A:Tag is found, the Category is set to **other-general**.
-      
-    The same tag will not be repeated across multiple columns.
+      - Duplicate tags across buckets are suppressed.
     """
 )
 
@@ -136,7 +148,7 @@ a_tags_input = st.text_input("A:Tags (comma‑separated)", value="window, door, 
 uploaded_file = st.file_uploader("Upload CSV/Excel File", type=["csv", "xls", "xlsx"])
 
 if uploaded_file:
-    # Load the file.
+    # Load file into a DataFrame.
     if uploaded_file.name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
     else:
@@ -144,15 +156,14 @@ if uploaded_file:
     
     # Process user inputs.
     omitted_list = [s.strip() for s in omit_input.split(",") if s.strip()]
-    # Normalize each provided A:Tag.
+    # Normalize and build a set of A:Tags.
     user_a_tags = set(normalize_token(s.strip()) for s in a_tags_input.split(",") if s.strip())
     
+    # Process each keyword.
     categories = []
     b_tags = []
     c_tags = []
     d_tags = []
-    
-    # Process each keyword.
     for idx, row in df.iterrows():
         keyword = row["Keywords"]
         cat, b_tag, c_tag, d_tag = process_keyword_order(keyword, seed_keyword, omitted_list, user_a_tags)
