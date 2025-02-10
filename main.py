@@ -59,19 +59,21 @@ def canonicalize_phrase(phrase):
 
 def pick_tags_pos_based(tokens, user_a_tags):
     """
-    Given a list of candidate tokens (in original order), assign one‐word tags for A, B, and C as follows:
+    Given a list of candidate tokens (in original order), assign one-word tags for A, B, and C as follows:
     
     1. A:Tag  
-       - Flatten the tokens (splitting any multi‐word tokens on whitespace) and scan for one that “contains”
-         an allowed A:tag (or vice‐versa). If found, remove that token and set A:Tag to the allowed tag.
+       - Flatten the tokens (splitting on whitespace) and scan for one that “contains” an allowed A:tag
+         (or vice-versa). If found, remove that token and set A:Tag to the allowed tag.
        - If none is found, force A:Tag to "general-other" (without removing any token).
     
     2. B:Tag and C:Tag  
-       - Filter the remaining tokens by removing stopwords.
+       - From the remaining tokens, filter out any stopwords.
        - If at least two tokens remain, assign B:Tag = first token and C:Tag = second token.
+         Then, use POS tagging on these two tokens: if the first token is not an adjective (or gerund)
+         but the second is, swap them.
        - If only one token remains, assign it to B:Tag and leave C:Tag blank.
     """
-    # Flatten tokens in case any token contains embedded whitespace.
+    # Flatten tokens (if any token contains embedded whitespace)
     flat_tokens = []
     for token in tokens:
         flat_tokens.extend(token.split())
@@ -97,8 +99,12 @@ def pick_tags_pos_based(tokens, user_a_tags):
     filtered = [t for t in tokens_copy if t.lower() not in stop_words and t.strip() != ""]
 
     if len(filtered) >= 2:
-        b_tag = filtered[0]
-        c_tag = filtered[1]
+        b_tag, c_tag = filtered[0], filtered[1]
+        pos_tags = pos_tag([b_tag, c_tag])
+        # If the first token is not an adjective/gerund but the second is, swap them.
+        if not (pos_tags[0][1].startswith("JJ") or pos_tags[0][1] == "VBG") and \
+           (pos_tags[1][1].startswith("JJ") or pos_tags[1][1] == "VBG"):
+            b_tag, c_tag = c_tag, b_tag
     elif len(filtered) == 1:
         b_tag = filtered[0]
         c_tag = ""
@@ -171,15 +177,12 @@ def group_candidate_themes(all_phrases, min_freq):
             candidate_map[rep] = freq
     return candidate_map
 
-###
-### Post-Processing Realignment (unchanged)
-###
-
 def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
     """
-    Example approach:
-      1) Gather frequencies of each token in col_name vs. other_col.
-      2) If a token appears more often in the other column, reassign it there.
+    Post-processing re-alignment:
+      1) Gather frequencies for each token in the specified columns.
+      2) For each row, reassign tokens based on the overall frequency, but then ensure that
+         each cell gets only one token.
     """
     freq_in_col = Counter()
     freq_in_other = Counter()
@@ -212,12 +215,13 @@ def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
         new_b_list = []
         new_o_list = []
         for (t, orig) in combined:
-            if unify_map[t] == col_name:
+            if unify_map.get(t, col_name) == col_name:
                 new_b_list.append(t)
             else:
                 new_o_list.append(t)
-        new_b_col.append(" ".join(new_b_list) if new_b_list else "")
-        new_o_col.append(" ".join(new_o_list) if new_o_list else "")
+        # Instead of joining all tokens, take only the first token if available.
+        new_b_col.append(new_b_list[0] if new_b_list else "")
+        new_o_col.append(new_o_list[0] if new_o_list else "")
     df[col_name] = new_b_col
     df[other_col] = new_o_col
     return df
