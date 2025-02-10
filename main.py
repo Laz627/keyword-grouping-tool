@@ -49,19 +49,21 @@ def normalize_phrase(phrase):
 def canonicalize_phrase(phrase):
     """
     Remove unwanted tokens (e.g. "series") while preserving original order.
+    Also replace underscores with spaces so that tokens like "sash_replacement"
+    become "sash replacement".
     E.g., 'pella 350 series' becomes 'pella 350'.
     """
     tokens = word_tokenize(phrase.lower())
     norm = [normalize_token(t) for t in tokens if t.isalnum() and normalize_token(t) != "series"]
-    return " ".join(norm)
+    return " ".join(norm).replace("_", " ")
 
 def pick_tags_pos_based(tokens, user_a_tags):
     """
-    Given a list of candidate tokens (in original order), assign one-word tags for A, B, and C as follows:
+    Given a list of candidate tokens (in original order), assign one‐word tags for A, B, and C as follows:
     
     1. A:Tag  
-       - Scan the (flattened) tokens for one that “contains” an allowed A:tag (or vice‐versa).
-       - If found, remove that token and set A:Tag to the allowed tag.
+       - Flatten the tokens (splitting any multi‐word tokens on whitespace) and scan for one that “contains”
+         an allowed A:tag (or vice‐versa). If found, remove that token and set A:Tag to the allowed tag.
        - If none is found, force A:Tag to "general-other" (without removing any token).
     
     2. B:Tag and C:Tag  
@@ -175,7 +177,7 @@ def group_candidate_themes(all_phrases, min_freq):
 
 def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
     """
-    Example approach: 
+    Example approach:
       1) Gather frequencies of each token in col_name vs. other_col.
       2) If a token appears more often in the other column, reassign it there.
     """
