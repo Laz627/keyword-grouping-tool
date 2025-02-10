@@ -51,7 +51,8 @@ def canonicalize_phrase(phrase):
     """
     Remove unwanted tokens (e.g. "series") while preserving original order.
     Also replace underscores with spaces so that tokens like "sash_replacement"
-    become "sash replacement". For example, 'pella 350 series' becomes 'pella 350'.
+    become "sash replacement".
+    For example, 'pella 350 series' becomes 'pella 350'.
     """
     tokens = word_tokenize(phrase.lower())
     norm = [normalize_token(t) for t in tokens if t.isalnum() and normalize_token(t) != "series"]
@@ -229,20 +230,23 @@ def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
 ### Streamlit UI with Enhanced Instructions
 ###
 
-# Sidebar instructions
 st.sidebar.title("Keyword Tagging Tool")
 st.sidebar.markdown("""
-This tool allows you to extract candidate themes and perform full tagging on keywords using a three-tag system.
+This tool extracts candidate themes and performs full tagging on keywords using a three-tag system.
 
 **Modes:**
-- **Candidate Theme Extraction:** Extract candidate themes from your keywords and see a preview of the A, B, and C tags.
-- **Full Tagging:** Process the entire file and assign A:Tag (e.g. door/window), B:Tag, and C:Tag to each keyword.
-
+- **Candidate Theme Extraction:**  
+  Extract candidate themes (and their frequencies) from your keywords and preview the resulting A, B, and C tags.
+- **Full Tagging:**  
+  Assign A:Tag (e.g. door/window), B:Tag, and C:Tag to each keyword.
+  
 **Instructions:**
-1. Upload a CSV/Excel file that contains a column named **Keywords**.
-2. Use the settings to limit processing or adjust n-gram extraction.
-3. Specify allowed A:Tags (e.g. "door, window") to force categorization.
-4. Optionally, enable post-processing re-alignment for consistent one-word tagging.
+1. Upload a CSV/Excel file with a column named **Keywords**.
+2. For Candidate Theme Extraction, adjust keyphrase settings and view clustering if desired.
+3. For Full Tagging, you may optionally upload an **Initial Tagging Rule** file (the output from Candidate Theme Extraction)
+   to serve as a first draft mapping.
+4. Specify allowed A:Tags (e.g. "door, window") and other settings.
+5. Optionally enable post-processing re-alignment for consistent one-word tags.
 """)
 
 # Radio buttons to choose mode
@@ -252,12 +256,12 @@ if mode == "Candidate Theme Extraction":
     st.title("Candidate Theme Extraction (Preview of A, B, C Tags)")
     st.markdown("""
     **How It Works:**
-    - The tool extracts candidate keyphrases from each keyword using KeyBERT with an n-gram range of (1,4).
-    - It then normalizes and canonicalizes these phrases.
+    - KeyBERT extracts candidate keyphrases (n-gram range: 1-4) from each keyword.
+    - The candidate phrases are normalized and canonicalized.
     - The tagging algorithm:
        1. Searches for an allowed A:Tag (e.g. "door" or "window") and removes it.
-       2. Assigns the first two remaining tokens as B:Tag and C:Tag (with a possible swap based on part-of-speech).
-    - You will see a table of candidate themes with their frequency and the resulting tags.
+       2. Assigns the first two remaining tokens as B:Tag and C:Tag (with a POS-based swap if needed).
+    - The output table shows candidate themes, frequency, and the resulting tags.
     """)
     file = st.file_uploader("Upload CSV/Excel file (must contain a 'Keywords' column)", type=["csv", "xls", "xlsx"])
     nm = st.number_input("Process first N keywords (0 for all)", min_value=0, value=0)
@@ -324,12 +328,14 @@ elif mode == "Full Tagging":
     st.title("Full Tagging (Assigning A, B, C Tags to Keywords)")
     st.markdown("""
     **How It Works:**
-    - The tool processes each keyword by first removing any specified seed or omitted phrases.
-    - It then extracts a candidate keyphrase using KeyBERT (n-gram range: 1-4) and normalizes it.
-    - The tagging algorithm then:
+    - Each keyword is processed by first removing any specified seed or omitted phrases.
+    - A candidate keyphrase is extracted (n-gram range: 1-4) and then normalized.
+    - The tagging algorithm:
        1. Searches for an allowed A:Tag (e.g. "door" or "window") and removes it.
-       2. Uses the first two remaining non-stopword tokens for B:Tag and C:Tag.
-       3. If necessary, swaps B and C based on part-of-speech (e.g., adjectives should be in B).
+       2. Uses the first two remaining non-stopword tokens as B:Tag and C:Tag (with a POS-based swap if needed).
+    - **Optional:** You can upload an **Initial Tagging Rule** CSV (output from Candidate Theme Extraction)
+      to serve as a first-draft mapping. In that case, if the canonical form of a keyword matches one in the rule,
+      the corresponding tags are applied directly.
     - A post-processing re-alignment step (optional) ensures each tag cell contains only one word.
     """)
     seed = st.text_input("Seed Keyword (optional)", "")
@@ -337,7 +343,28 @@ elif mode == "Full Tagging":
     user_atags_str = st.text_input("Specify allowed A:Tags (comma-separated)", "door, window")
     do_realign = st.checkbox("Enable post-processing re-alignment for B/C tags?", value=True)
     
+    # New: Optional initial tagging rule CSV from candidate extraction
+    initial_rule_file = st.file_uploader("Upload Initial Tagging Rule CSV (optional)", type=["csv", "xls", "xlsx"])
+    use_initial_rule = st.checkbox("Use Initial Tagging Rule if available", value=False)
+    
     file = st.file_uploader("Upload CSV/Excel file (must contain a 'Keywords' column)", type=["csv", "xls", "xlsx"])
+    
+    # Build the initial rule mapping if requested and provided
+    initial_rule_mapping = {}
+    if use_initial_rule and initial_rule_file is not None:
+        try:
+            if initial_rule_file.name.endswith(".csv"):
+                rule_df = pd.read_csv(initial_rule_file)
+            else:
+                rule_df = pd.read_excel(initial_rule_file)
+            # Expecting columns: Candidate Theme, A:Tag, B:Tag, C:Tag
+            for index, row in rule_df.iterrows():
+                candidate = str(row["Candidate Theme"])
+                # Canonicalize the candidate theme using the same functions
+                canon_candidate = canonicalize_phrase(normalize_phrase(candidate))
+                initial_rule_mapping[canon_candidate] = (str(row["A:Tag"]), str(row["B:Tag"]), str(row["C:Tag"]))
+        except Exception as e:
+            st.error("Error reading initial tagging rule file: " + str(e))
     
     if file:
         try:
@@ -357,7 +384,13 @@ elif mode == "Full Tagging":
     
             A_list, B_list, C_list = [], [], []
             for kw in df["Keywords"]:
-                a, b, c = classify_keyword_three(kw, seed, omitted_list, user_a_tags)
+                # First, canonicalize the keyword as a potential lookup key
+                canon_kw = canonicalize_phrase(normalize_phrase(kw))
+                # If using initial rule mapping and a match is found, use that first-draft tag
+                if use_initial_rule and initial_rule_mapping and canon_kw in initial_rule_mapping:
+                    a, b, c = initial_rule_mapping[canon_kw]
+                else:
+                    a, b, c = classify_keyword_three(kw, seed, omitted_list, user_a_tags)
                 A_list.append(a)
                 B_list.append(b)
                 C_list.append(c)
@@ -368,7 +401,7 @@ elif mode == "Full Tagging":
     
             if do_realign:
                 st.markdown("### Post-Processing Re-Alignment")
-                st.write("This step reassigns tokens based on overall frequency while ensuring that each tag cell contains only one word.")
+                st.write("This step reassigns tokens based on overall frequency while ensuring each tag cell contains only one word.")
                 df = realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag")
     
             st.dataframe(df[["Keywords", "A:Tag", "B:Tag", "C:Tag"]])
