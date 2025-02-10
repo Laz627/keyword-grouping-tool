@@ -75,23 +75,14 @@ def extract_adjectives_from_text(text):
     return adjectives
 
 def process_keywords(df, seed_keyword, n_clusters, extract_adjectives):
-    """
-    Processes the DataFrame:
-      - Extracts and cleans keyphrases for each row.
-      - Combines phrases and clusters them via KMeans.
-      - Assigns each row a theme based on the most frequent cluster among its phrases.
-      - Optionally extracts adjectives from the original keyword.
-    Returns an updated DataFrame and the mapping of clusters to theme names.
-    """
     if 'Keywords' not in df.columns:
         st.error("Error: The dataframe must contain a column named 'Keywords'.")
         return None, None
 
     seed_words = seed_keyword.lower().split() if seed_keyword else []
-    
     progress_bar = st.progress(0)
-    all_cleaned_phrases = []  # To store all phrases (lowercased) across rows
-    extracted_data = []       # To store per-row extracted data
+    all_cleaned_phrases = []  
+    extracted_data = []       
 
     for idx, row in df.iterrows():
         kp = extract_keyphrases(row['Keywords'])
@@ -112,8 +103,8 @@ def process_keywords(df, seed_keyword, n_clusters, extract_adjectives):
         st.error("No keyphrases were extracted from the data.")
         return None, None
 
-    # Use the explicitly loaded SentenceTransformer model to encode phrases
-    embeddings = embedding_model.encode(unique_phrases)
+    # Use the dedicated encoder to obtain embeddings
+    embeddings = embedding_model_encode.encode(unique_phrases)
 
     k = min(n_clusters, len(unique_phrases))
     kmeans = KMeans(n_clusters=k, random_state=42)
@@ -123,7 +114,7 @@ def process_keywords(df, seed_keyword, n_clusters, extract_adjectives):
     cluster_to_phrases = {}
     for phrase, label in phrase_to_cluster.items():
         cluster_to_phrases.setdefault(label, []).append(phrase)
-    
+
     cluster_themes = {}
     for label, phrases in cluster_to_phrases.items():
         freq = {phrase: all_cleaned_phrases.count(phrase) for phrase in phrases}
@@ -150,7 +141,7 @@ def process_keywords(df, seed_keyword, n_clusters, extract_adjectives):
         df_result['Adjectives'] = df_result['Keywords'].apply(
             lambda text: ", ".join(extract_adjectives_from_text(text))
         )
-    
+
     return df_result, cluster_themes
 
 # Process the uploaded file if provided
