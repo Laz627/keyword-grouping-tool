@@ -57,25 +57,29 @@ def pick_tags_pos_based(tokens, user_a_tags):
     
     1. A:Tag  
        - Scan the tokens (in order) for one that “contains” an allowed A:tag (or vice‐versa).
-       - If found, remove that token from the list and set A:Tag to the allowed tag.
+       - If found, remove that token (from a flattened list) and set A:Tag to the allowed tag.
        - If not found, force A:Tag to "general-other" (without removing any tokens).
     
     2. B:Tag and C:Tag  
-       - From the remaining tokens list (which is now guaranteed to be a list of single words),
-         if at least two tokens exist, assign:
+       - First, flatten the token list in case any token has embedded spaces.
+       - Then, from the flattened tokens list, if at least two tokens exist, assign:
              B:Tag = first token 
              C:Tag = second token  
          If only one token remains, assign it to B:Tag and leave C:Tag blank.
          (Extra tokens beyond the first two are ignored.)
     """
-    # Work on a copy so as not to modify the original list.
-    tokens_copy = tokens[:]  
+    # First, flatten the list in case any token has embedded spaces.
+    flat_tokens = []
+    for token in tokens:
+        flat_tokens.extend(token.split())
+    
+    tokens_copy = flat_tokens[:]  # Work on a copy
     a_tag = None
     for i, token in enumerate(tokens_copy):
         for allowed in user_a_tags:
             if allowed in token or token in allowed:
                 a_tag = allowed
-                tokens_copy.pop(i)  # Remove the token that matched
+                tokens_copy.pop(i)  # Remove the matching token
                 break
         if a_tag is not None:
             break
@@ -83,7 +87,6 @@ def pick_tags_pos_based(tokens, user_a_tags):
     if a_tag is None:
         a_tag = "general-other"
 
-    # Ensure tokens_copy is a list of nonempty single-word tokens
     tokens_copy = [t for t in tokens_copy if t.strip() != ""]
 
     if len(tokens_copy) >= 2:
@@ -104,8 +107,7 @@ def classify_keyword_three(keyword, seed, omitted_list, user_a_tags):
       2) Use KeyBERT to extract the top candidate keyphrase from the remaining text,
          using an n-gram range of (1,4) so that up to four words can be returned.
       3) Normalize and canonicalize the candidate while preserving word order.
-      4) Split the candidate into individual tokens (filtering out any empties) and use
-         pick_tags_pos_based() to assign A, B, and C tags.
+      4) Split the candidate into individual tokens and use pick_tags_pos_based() to assign A, B, and C tags.
          If no candidate is found, return ("general-other", "", "").
     """
     text = keyword.lower()
@@ -125,7 +127,6 @@ def classify_keyword_three(keyword, seed, omitted_list, user_a_tags):
     canon = canonicalize_phrase(norm_candidate)
     if not canon:
         return ("general-other", "", "")
-    # Split and filter to get a list of single words.
     tokens = [t for t in canon.split() if t.strip() != ""]
     return pick_tags_pos_based(tokens, user_a_tags)
 
