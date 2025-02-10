@@ -54,46 +54,57 @@ def canonicalize_phrase(phrase):
 def pick_tags_pos_based(tokens, user_a_tags):
     """
     Splits a list of tokens into three tags (A, B, C) with the following logic:
-    
-      1) A:Tag – Look for the first token that is in the allowed set (user_a_tags).  
-         If found, remove it from the candidate token list and use it as A.  
-         If not found, set A to "general-other".
-         
-      2) B:Tag – From the remaining tokens, select the first token whose POS tag starts with
-         "JJ" (adjective) or is "VBG" (gerund). If none, take the first remaining token.
+
+      1) A:Tag – Search the tokens for one that “contains” one of the allowed user A:tags.
+         (That is, for each candidate token, if any allowed tag is a substring of it or vice versa,
+         then force A to be that allowed tag.) If found, remove that token from the token list.
+         If none is found, fall back by removing the last token and using that as A:Tag.
+         (If no tokens exist, default to "general-other".)
+
+      2) B:Tag – With the remaining tokens, perform a POS tag check:
+         • If any token is an adjective (POS starts with "JJ") or a gerund ("VBG"), select the first.
+         • Otherwise, select the first token.
          Remove the selected token from the list.
-         
-      3) C:Tag – The rest of the tokens (joined by a space) or empty if none.
+
+      3) C:Tag – Join any remaining tokens (if any) into a string.
     """
     leftover = tokens[:]  # make a copy
-    # --- A:Tag ---
     a_tag = ""
     found = False
+    # Use "contains" matching for allowed A:tags
     for token in tokens:
-        if token in user_a_tags:
-            a_tag = token
-            leftover.remove(token)
-            found = True
+        for allowed in user_a_tags:
+            # If the allowed tag appears in the token (or vice versa), use the allowed tag.
+            if allowed in token or token in allowed:
+                a_tag = allowed
+                if token in leftover:
+                    leftover.remove(token)
+                found = True
+                break
+        if found:
             break
     if not found:
-        a_tag = "general-other"
-        
-    # --- B:Tag ---
+        # Fallback: remove the last token as A:Tag if available; otherwise default.
+        if leftover:
+            a_tag = leftover.pop(-1)
+        else:
+            return ("general-other", "", "")
+    
+    # Now choose B:Tag from the remaining tokens.
     b_tag = ""
     if leftover:
-        # Use NLTK's POS tagger on the leftover tokens
         pos_list = pos_tag(leftover)
-        for i, (w, p) in enumerate(pos_list):
+        for (w, p) in pos_list:
             if p.startswith("JJ") or p == "VBG":
                 b_tag = w
-                leftover.remove(w)
+                if w in leftover:
+                    leftover.remove(w)
                 break
         if not b_tag and leftover:
             b_tag = leftover.pop(0)
-            
-    # --- C:Tag ---
-    c_tag = " ".join(leftover) if leftover else ""
     
+    # C:Tag is whatever tokens remain.
+    c_tag = " ".join(leftover) if leftover else ""
     return (a_tag, b_tag, c_tag)
 
 def classify_keyword_three(keyword, seed, omitted_list, user_a_tags):
@@ -101,9 +112,9 @@ def classify_keyword_three(keyword, seed, omitted_list, user_a_tags):
     Processes a keyword string as follows:
       1) Removes the seed and any omitted phrases.
       2) Uses KeyBERT to extract the top candidate keyphrase from the remaining text,
-         limiting extraction to single-word (1-gram) candidates.
-      3) Normalizes and canonicalizes the candidate.
-      4) Splits the candidate into tokens and uses pick_tags_pos_based to produce A, B, and C tags.
+         using an n‑gram range of (1,3) so that multi‐word phrases are possible.
+      3) Normalizes and canonicalizes the candidate, then splits it into tokens.
+      4) Uses pick_tags_pos_based to assign A, B, and C tags.
          If no candidate is found, returns ("general-other", "", "").
     """
     text = keyword.lower()
@@ -115,8 +126,8 @@ def classify_keyword_three(keyword, seed, omitted_list, user_a_tags):
         text = re.sub(pat, '', text)
     text = text.strip()
 
-    # Extract a candidate keyphrase as a 1-gram
-    keyphrases = kw_model.extract_keywords(text, keyphrase_ngram_range=(1,1), stop_words='english', top_n=1)
+    # Extract candidate keyphrase using multi-word (1,3) extraction.
+    keyphrases = kw_model.extract_keywords(text, keyphrase_ngram_range=(1,3), stop_words='english', top_n=1)
     if not keyphrases:
         return ("general-other", "", "")
     candidate = keyphrases[0][0].lower()
@@ -130,11 +141,11 @@ def classify_keyword_three(keyword, seed, omitted_list, user_a_tags):
 def extract_candidate_themes(keywords_list, top_n):
     """
     Gathers up to top_n candidate keyphrases from each keyword in keywords_list,
-    using only single-word (1-gram) extraction.
+    using an n-gram range of (1,3). (Later the candidate phrase is split into tokens.)
     """
     all_phrases = []
     for kw in keywords_list:
-        kps = kw_model.extract_keywords(kw, keyphrase_ngram_range=(1,1), stop_words='english', top_n=top_n)
+        kps = kw_model.extract_keywords(kw, keyphrase_ngram_range=(1,3), stop_words='english', top_n=top_n)
         for kp in kps:
             if kp[0]:
                 all_phrases.append(kp[0].lower())
@@ -142,8 +153,8 @@ def extract_candidate_themes(keywords_list, top_n):
 
 def group_candidate_themes(all_phrases, min_freq):
     """
-    Groups candidate phrases by their canonical form. For each canonical group, if the frequency
-    is at least min_freq, selects the most common normalized form as the representative.
+    Groups candidate phrases by their canonical form. For each group that meets the frequency
+    threshold (min_freq), selects the most common normalized form as the representative.
     Returns a dictionary mapping the representative phrase to its frequency.
     """
     grouped = {}
@@ -167,14 +178,13 @@ def group_candidate_themes(all_phrases, min_freq):
 def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
     """
     Example approach: 
-    1) Gather frequencies of each token in col_name vs. other_col.
-    2) If a token appears more often in the other column, reassign it there.
-    (This function is unchanged from your original.)
+      1) Gather frequencies of each token in col_name vs. other_col.
+      2) If a token appears more often in the other column, reassign it there.
     """
     freq_in_col = Counter()
     freq_in_other = Counter()
 
-    # Parse tokens in each col
+    # Parse tokens in each col.
     for i, row in df.iterrows():
         bval = row[col_name]
         oval = row[other_col]
@@ -209,10 +219,8 @@ def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
                 new_o_list.append(t)
         new_b_col.append(" ".join(new_b_list) if new_b_list else "")
         new_o_col.append(" ".join(new_o_list) if new_o_list else "")
-
     df[col_name] = new_b_col
     df[other_col] = new_o_col
-
     return df
 
 ###
@@ -231,7 +239,7 @@ if mode == "Candidate Theme Extraction":
     mfreq = st.number_input("Minimum frequency for a candidate theme", min_value=1, value=2)
     clust = st.number_input("Number of clusters (0 = skip)", min_value=0, value=0)
     
-    # (Optional) Let the user specify allowed A:Tags
+    # Let the user specify allowed A:Tags.
     user_atags_str = st.text_input("User A:Tags (comma-separated)", "door, window")
     user_a_tags = set(normalize_token(x.strip()) for x in user_atags_str.split(",") if x.strip())
     
@@ -263,7 +271,7 @@ if mode == "Candidate Theme Extraction":
                     norm = normalize_phrase(theme)
                     canon = canonicalize_phrase(norm)
                     tokens = canon.split()
-                    # Use our updated function – note that if no allowed token is found, A:Tag becomes "general-other"
+                    # Use the updated pick_tags_pos_based with contains matching.
                     a, b, c = pick_tags_pos_based(tokens, user_a_tags)
                     splitted.append((a, b, c))
                 cdf["A:Tag"], cdf["B:Tag"], cdf["C:Tag"] = zip(*splitted)
