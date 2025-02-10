@@ -45,29 +45,66 @@ def normalize_phrase(phrase):
 def canonicalize_phrase(phrase):
     """
     Remove 'series' tokens, then sort.
-    'pella 350 series' => '350 pella'
+    e.g. 'pella 350 series' => '350 pella'
     """
     tokens = word_tokenize(phrase.lower())
     norm = [normalize_token(t) for t in tokens if t.isalnum() and normalize_token(t) != "series"]
     return " ".join(sorted(norm))
 
-def pick_single_tag(tokens, user_a_tags):
+def pick_tags_pos_based(tokens, user_a_tags):
     """
-    Given a list of tokens (already normalized), return the first token
-    that appears in user_a_tags. If none, return "general-other".
+    Splits a list of tokens into three tags (A, B, C) with the following logic:
+    
+      1) A:Tag – Look for the first token that is in the allowed set (user_a_tags).  
+         If found, remove it from the candidate token list and use it as A.  
+         If not found, set A to "general-other".
+         
+      2) B:Tag – From the remaining tokens, select the first token whose POS tag starts with
+         "JJ" (adjective) or is "VBG" (gerund). If none, take the first remaining token.
+         Remove the selected token from the list.
+         
+      3) C:Tag – The rest of the tokens (joined by a space) or empty if none.
     """
+    leftover = tokens[:]  # make a copy
+    # --- A:Tag ---
+    a_tag = ""
+    found = False
     for token in tokens:
         if token in user_a_tags:
-            return token
-    return "general-other"
+            a_tag = token
+            leftover.remove(token)
+            found = True
+            break
+    if not found:
+        a_tag = "general-other"
+        
+    # --- B:Tag ---
+    b_tag = ""
+    if leftover:
+        # Use NLTK's POS tagger on the leftover tokens
+        pos_list = pos_tag(leftover)
+        for i, (w, p) in enumerate(pos_list):
+            if p.startswith("JJ") or p == "VBG":
+                b_tag = w
+                leftover.remove(w)
+                break
+        if not b_tag and leftover:
+            b_tag = leftover.pop(0)
+            
+    # --- C:Tag ---
+    c_tag = " ".join(leftover) if leftover else ""
+    
+    return (a_tag, b_tag, c_tag)
 
-def classify_keyword_single(keyword, seed, omitted_list, user_a_tags):
+def classify_keyword_three(keyword, seed, omitted_list, user_a_tags):
     """
-    Process a keyword:
-      1) Remove seed and omitted phrases.
-      2) Use KeyBERT to extract a top candidate using only 1‑grams.
-      3) Normalize the candidate token.
-      4) If it is in user_a_tags, return it; else return "general-other".
+    Processes a keyword string as follows:
+      1) Removes the seed and any omitted phrases.
+      2) Uses KeyBERT to extract the top candidate keyphrase from the remaining text,
+         limiting extraction to single-word (1-gram) candidates.
+      3) Normalizes and canonicalizes the candidate.
+      4) Splits the candidate into tokens and uses pick_tags_pos_based to produce A, B, and C tags.
+         If no candidate is found, returns ("general-other", "", "").
     """
     text = keyword.lower()
     if seed:
@@ -77,21 +114,23 @@ def classify_keyword_single(keyword, seed, omitted_list, user_a_tags):
         pat = rf'\b{re.escape(omit)}\b'
         text = re.sub(pat, '', text)
     text = text.strip()
-    
-    # Extract candidate with only single-word keyphrases
+
+    # Extract a candidate keyphrase as a 1-gram
     keyphrases = kw_model.extract_keywords(text, keyphrase_ngram_range=(1,1), stop_words='english', top_n=1)
     if not keyphrases:
-        return "general-other"
-    candidate = keyphrases[0][0].lower().strip()
-    candidate = normalize_token(candidate)
-    if candidate in user_a_tags:
-        return candidate
-    else:
-        return "general-other"
+        return ("general-other", "", "")
+    candidate = keyphrases[0][0].lower()
+    norm_candidate = normalize_phrase(candidate)
+    canon = canonicalize_phrase(norm_candidate)
+    if not canon:
+        return ("general-other", "", "")
+    tokens = canon.split()
+    return pick_tags_pos_based(tokens, user_a_tags)
 
 def extract_candidate_themes(keywords_list, top_n):
     """
-    Gather up to top_n keyphrases from each keyword using only 1‑grams.
+    Gathers up to top_n candidate keyphrases from each keyword in keywords_list,
+    using only single-word (1-gram) extraction.
     """
     all_phrases = []
     for kw in keywords_list:
@@ -103,7 +142,9 @@ def extract_candidate_themes(keywords_list, top_n):
 
 def group_candidate_themes(all_phrases, min_freq):
     """
-    Group by canonical form => pick frequency => return {rep: freq}.
+    Groups candidate phrases by their canonical form. For each canonical group, if the frequency
+    is at least min_freq, selects the most common normalized form as the representative.
+    Returns a dictionary mapping the representative phrase to its frequency.
     """
     grouped = {}
     for phr in all_phrases:
@@ -120,11 +161,59 @@ def group_candidate_themes(all_phrases, min_freq):
     return candidate_map
 
 ###
-### (Optional) Post-Processing Realignment – no longer used with a single tag
+### Post-Processing Realignment (unchanged)
 ###
-# (The following function is no longer needed since we only produce a single tag.)
-# def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
-#     ...
+
+def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
+    """
+    Example approach: 
+    1) Gather frequencies of each token in col_name vs. other_col.
+    2) If a token appears more often in the other column, reassign it there.
+    (This function is unchanged from your original.)
+    """
+    freq_in_col = Counter()
+    freq_in_other = Counter()
+
+    # Parse tokens in each col
+    for i, row in df.iterrows():
+        bval = row[col_name]
+        oval = row[other_col]
+        if bval:
+            for token in bval.split():
+                freq_in_col[token] += 1
+        if oval:
+            for token in oval.split():
+                freq_in_other[token] += 1
+
+    unify_map = {}
+    all_tokens = set(freq_in_col.keys()) | set(freq_in_other.keys())
+    for tok in all_tokens:
+        c_freq = freq_in_col[tok]
+        o_freq = freq_in_other[tok]
+        if o_freq > c_freq:
+            unify_map[tok] = other_col
+        else:
+            unify_map[tok] = col_name
+
+    new_b_col, new_o_col = [], []
+    for i, row in df.iterrows():
+        b_tokens = row[col_name].split() if row[col_name] else []
+        o_tokens = row[other_col].split() if row[other_col] else []
+        combined = [(t, "b") for t in b_tokens] + [(t, "o") for t in o_tokens]
+        new_b_list = []
+        new_o_list = []
+        for (t, orig) in combined:
+            if unify_map[t] == col_name:
+                new_b_list.append(t)
+            else:
+                new_o_list.append(t)
+        new_b_col.append(" ".join(new_b_list) if new_b_list else "")
+        new_o_col.append(" ".join(new_o_list) if new_o_list else "")
+
+    df[col_name] = new_b_col
+    df[other_col] = new_o_col
+
+    return df
 
 ###
 ### Streamlit UI
@@ -134,20 +223,19 @@ st.sidebar.title("Select Mode")
 mode = st.sidebar.radio("Choose mode:", ("Candidate Theme Extraction", "Full Tagging"))
 
 if mode == "Candidate Theme Extraction":
-    st.title("Candidate Theme Extraction (Single-Tag)")
+    st.title("Candidate Theme Extraction (A, B, C Tags)")
     
-    file = st.file_uploader("Upload CSV/Excel with 'Keywords' column", type=["csv", "xls", "xlsx"])
-    nm = st.number_input("Process first N keywords (0=all)", min_value=0, value=0)
+    file = st.file_uploader("Upload CSV/Excel with a 'Keywords' column", type=["csv", "xls", "xlsx"])
+    nm = st.number_input("Process first N keywords (0 = all)", min_value=0, value=0)
     topn = st.number_input("Keyphrases per keyword", min_value=1, value=3)
     mfreq = st.number_input("Minimum frequency for a candidate theme", min_value=1, value=2)
-    clust = st.number_input("Number of clusters (0=skip)", min_value=0, value=0)
+    clust = st.number_input("Number of clusters (0 = skip)", min_value=0, value=0)
     
-    # Add a text input for allowed tags (User A:Tags)
+    # (Optional) Let the user specify allowed A:Tags
     user_atags_str = st.text_input("User A:Tags (comma-separated)", "door, window")
     user_a_tags = set(normalize_token(x.strip()) for x in user_atags_str.split(",") if x.strip())
     
     if file:
-        # load file
         try:
             if file.name.endswith(".csv"):
                 df = pd.read_csv(file)
@@ -158,7 +246,7 @@ if mode == "Candidate Theme Extraction":
             st.stop()
     
         if "Keywords" not in df.columns:
-            st.error("File must have 'Keywords' column.")
+            st.error("File must have a 'Keywords' column.")
         else:
             kw_list = df["Keywords"].tolist()
             if nm > 0:
@@ -170,17 +258,16 @@ if mode == "Candidate Theme Extraction":
             if c_map:
                 cdf = pd.DataFrame(list(c_map.items()), columns=["Candidate Theme", "Frequency"])
                 cdf = cdf.sort_values(by="Frequency", ascending=False)
-                
-                # Instead of splitting into A/B/C, simply pick a single tag
-                tags = []
+                splitted = []
                 for theme in cdf["Candidate Theme"]:
                     norm = normalize_phrase(theme)
                     canon = canonicalize_phrase(norm)
                     tokens = canon.split()
-                    tag = pick_single_tag(tokens, user_a_tags)
-                    tags.append(tag)
-                cdf["Tag"] = tags
-                
+                    # Use our updated function – note that if no allowed token is found, A:Tag becomes "general-other"
+                    a, b, c = pick_tags_pos_based(tokens, user_a_tags)
+                    splitted.append((a, b, c))
+                cdf["A:Tag"], cdf["B:Tag"], cdf["C:Tag"] = zip(*splitted)
+    
                 st.dataframe(cdf)
     
                 if clust > 0 and len(c_map) >= clust:
@@ -198,18 +285,17 @@ if mode == "Candidate Theme Extraction":
                 csvd = cdf.to_csv(index=False).encode('utf-8')
                 st.download_button("Download Candidate CSV", csvd, "candidate_themes.csv", "text/csv")
             else:
-                st.write("No candidate meets frequency threshold.")
+                st.write("No candidate meets the frequency threshold.")
 
 elif mode == "Full Tagging":
-    st.title("Full Tagging (Single Tag per Keyword)")
+    st.title("Full Tagging with A, B, C Tags")
     
     seed = st.text_input("Seed Keyword (optional)")
     omit_str = st.text_input("Omit Phrases (comma-separated)")
     user_atags_str = st.text_input("User A:Tags (comma-separated)", "door, window")
-    # With only one tag, the realignment option is no longer applicable.
-    # do_realign = st.checkbox("Enable post-processing realignment of tokens? (Not used)")
+    do_realign = st.checkbox("Enable post-processing realignment of B/C tokens?")
     
-    file = st.file_uploader("Upload CSV/Excel with 'Keywords'", type=["csv", "xls", "xlsx"])
+    file = st.file_uploader("Upload CSV/Excel with a 'Keywords' column", type=["csv", "xls", "xlsx"])
     
     if file:
         try:
@@ -222,19 +308,26 @@ elif mode == "Full Tagging":
             st.stop()
     
         if "Keywords" not in df.columns:
-            st.error("File must have 'Keywords' column.")
+            st.error("File must have a 'Keywords' column.")
         else:
             omitted_list = [x.strip().lower() for x in omit_str.split(",") if x.strip()]
             user_a_tags = set(normalize_token(x.strip()) for x in user_atags_str.split(",") if x.strip())
     
-            # Process each keyword to assign a single tag.
-            tag_list = []
+            A_list, B_list, C_list = [], [], []
             for kw in df["Keywords"]:
-                tag = classify_keyword_single(kw, seed, omitted_list, user_a_tags)
-                tag_list.append(tag)
+                a, b, c = classify_keyword_three(kw, seed, omitted_list, user_a_tags)
+                A_list.append(a)
+                B_list.append(b)
+                C_list.append(c)
     
-            df["Tag"] = tag_list
+            df["A:Tag"] = A_list
+            df["B:Tag"] = B_list
+            df["C:Tag"] = C_list
     
-            st.dataframe(df[["Keywords", "Tag"]])
+            if do_realign:
+                st.write("Performing post-processing realignment of tokens between B:Tag & C:Tag")
+                df = realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag")
+    
+            st.dataframe(df[["Keywords", "A:Tag", "B:Tag", "C:Tag"]])
             csvres = df.to_csv(index=False).encode('utf-8')
             st.download_button("Download Full Tagging CSV", csvres, "full_tagged.csv", "text/csv")
