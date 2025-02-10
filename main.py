@@ -23,17 +23,23 @@ lemmatizer = WordNetLemmatizer()
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 kw_model = KeyBERT(model=embedding_model)
 
-# --- Helper Functions for Normalization & Candidate Tag Recommendation ---
+# --- Helper Functions for Normalization and Candidate Tag Recommendation ---
 
 def normalize_token(token):
-    """Lowercase and lemmatize a token (noun mode). Also convert 'vs' to 'v'."""
+    """
+    Lowercase and lemmatize a token (noun mode).
+    Also convert "vs" to "v".
+    """
     token = token.lower()
     if token == "vs":
         token = "v"
     return lemmatizer.lemmatize(token, pos='n')
 
 def normalize_phrase(phrase):
-    """Tokenize and normalize (preserving word order) the phrase."""
+    """
+    Tokenize and normalize a phrase so that singular/plural variants are grouped together.
+    Returns the normalized phrase (tokens joined in original order).
+    """
     tokens = word_tokenize(phrase.lower())
     norm_tokens = [normalize_token(t) for t in tokens if t.isalnum()]
     return " ".join(norm_tokens)
@@ -41,80 +47,85 @@ def normalize_phrase(phrase):
 def canonicalize_phrase(phrase):
     """
     Returns a canonical form of the phrase by sorting the normalized tokens.
-    This groups variants like "pella window", "pella windows", and "window pella" together.
+    This groups together variants like "pella window", "pella windows", and "window pella".
     """
     tokens = word_tokenize(phrase.lower())
     norm_tokens = [normalize_token(t) for t in tokens if t.isalnum()]
     tokens_sorted = sorted(norm_tokens)
     return " ".join(tokens_sorted)
 
-def extract_candidate_tags(candidate):
+def extract_candidate_tags_three(candidate):
     """
-    Given a candidate theme (a string), use POS-tagging to recommend:
-      - A:Tag (Category): chosen as the rightmost noun.
+    Given a candidate theme string, use POS tagging to recommend a three-tag structure:
+      - A:Tag (Category): chosen as the rightmost noun or cardinal number (e.g. "NN" or "CD").
       - B:Tag: the first adjective (if any).
-      - C:Tag: all tokens before the head noun.
-      - D:Tag: all tokens after the head noun.
-    If no noun is found, fall back to the entire phrase.
-    Returns a tuple: (A_tag, B_tag, C_tag, D_tag).
+      - C:Tag: all tokens preceding the chosen head noun.
+    
+    If no noun (or number) is found, the entire candidate is used as A:Tag and C:Tag is empty.
+    Duplicate occurrences (if B equals A, etc.) are suppressed.
+    
+    Returns a tuple: (A_tag, B_tag, C_tag)
     """
     tokens = word_tokenize(candidate)
     tagged = pos_tag(tokens)
     norm_tokens = [normalize_token(t) for t in tokens if t.isalnum()]
-    norm_tagged = list(zip(norm_tokens, [tag for word, tag in tagged if word.isalnum()]))
-    
-    # Extract adjectives (JJ*) and nouns (NN*)
-    adjectives = [word for word, tag in norm_tagged if tag.startswith("JJ")]
-    nouns = [word for word, tag in norm_tagged if tag.startswith("NN")]
-    
-    if nouns:
-        a_tag = nouns[-1]
+    # Build a list of (token, pos) for alphanumeric tokens using normalized tokens.
+    norm_tagged = []
+    j = 0
+    for word, pos in tagged:
+        if word.isalnum():
+            norm_tagged.append((norm_tokens[j], pos))
+            j += 1
+
+    # Consider tokens with pos starting with "NN" or "CD" as candidate for A:Tag.
+    noun_candidates = [word for word, pos in norm_tagged if pos.startswith("NN") or pos.startswith("CD")]
+    # Consider adjectives (pos starting with "JJ").
+    adjectives = [word for word, pos in norm_tagged if pos.startswith("JJ")]
+
+    if noun_candidates:
+        a_tag = noun_candidates[-1]
+        # Find the rightmost occurrence of a_tag in norm_tokens.
         idx = len(norm_tokens) - 1 - norm_tokens[::-1].index(a_tag)
     else:
-        a_tag = candidate  # fallback
+        a_tag = candidate  # fallback: use the full candidate
         idx = len(norm_tokens) - 1
-    
+
     b_tag = adjectives[0] if adjectives else ""
     c_tag = " ".join(norm_tokens[:idx]) if idx > 0 else ""
-    d_tag = " ".join(norm_tokens[idx+1:]) if idx+1 < len(norm_tokens) else ""
     
-    # Remove duplicates across buckets.
+    # Remove duplicates if necessary.
     if b_tag == a_tag:
         b_tag = ""
     if c_tag == a_tag:
         c_tag = ""
-    if d_tag == a_tag or d_tag == b_tag:
-        d_tag = ""
-    return a_tag, b_tag, c_tag, d_tag
+    return a_tag, b_tag, c_tag
 
-# --- Helper Functions for Full Tagging ---
+# --- Helper Functions for Full Tagging (Three-Tag Version) ---
 
-# For full tagging, we use a word-order–based approach.
 STOPWORDS = {"the", "a", "an", "are", "is", "of", "and", "or", "how", "much",
              "do", "does", "be", "in", "to", "for", "on", "at"}
 
 def process_keyword_order(keyword, seed_keyword, omitted_list, user_a_tags):
     """
-    Processes a single keyword based on word order and user-provided parameters.
+    Processes a single keyword using a word-order based approach.
     
     Steps:
-      1. Lowercase the keyword and remove seed keyword (if provided) and omitted phrases.
-      2. Tokenize and normalize (keep only alphanumeric tokens).
-      3. Search for the first occurrence (in the filtered tokens) of any token in user_a_tags.
-         If found, that token becomes the Category; otherwise, Category is "other-general".
-      4. For a found A-tag:
-         - tokens_before = raw tokens before the found A-tag (ignoring stopwords and tokens equal to the Category).
-         - tokens_after = raw tokens after the A-tag (ignoring stopwords and tokens equal to the Category).
-         - B-tag: last token of tokens_after if available; else, last token of tokens_before.
-         - C-tag: join tokens_before.
-         - D-tag: join tokens_after (excluding the token used for B-tag).
-      5. For "other-general", use all filtered tokens:
-         - B-tag: last token.
-         - C-tag: join all tokens except the last.
-         - D-tag: empty.
-      6. Remove duplicates (if any tag equals the Category or repeats).
-    
-    Returns (Category, B-tag, C-tag, D-tag).
+      1. Lowercase the keyword and remove the seed keyword (if provided) and any omitted phrases.
+      2. Tokenize and normalize (keeping only alphanumeric tokens).
+      3. From the filtered token list (with omitted words removed), search for the first occurrence
+         of any token in the user-provided A:Tags. If found, that token (from the raw tokens) becomes
+         the Category; otherwise, Category is set to "other-general".
+      4. If a matching A:Tag is found:
+           - Let tokens_before be all raw tokens before the found A:Tag (ignoring STOPWORDS and tokens equal to the Category).
+           - Let tokens_after be all raw tokens after the A:Tag (ignoring STOPWORDS and tokens equal to the Category).
+           - B:Tag is chosen as the last token of tokens_after if available; else, from tokens_before.
+           - C:Tag is set to the join of tokens_before.
+      5. If no A:Tag is found (Category "other-general"), use all filtered tokens:
+           - B:Tag is the last token.
+           - C:Tag is the join of all tokens except the last.
+      6. Duplicate tags (if B equals Category, etc.) are suppressed.
+      
+    Returns a tuple: (Category, B_tag, C_tag)
     """
     text = keyword.lower()
     if seed_keyword:
@@ -129,7 +140,8 @@ def process_keyword_order(keyword, seed_keyword, omitted_list, user_a_tags):
     
     tokens = word_tokenize(text)
     raw_tokens = [normalize_token(t) for t in tokens if t.isalnum()]
-    filtered_tokens = [t for t in raw_tokens if t not in set(s.lower() for s in omitted_list)]
+    omitted_set = set(s.lower() for s in omitted_list)
+    filtered_tokens = [t for t in raw_tokens if t not in omitted_set]
     
     idx_A = None
     category = ""
@@ -148,14 +160,10 @@ def process_keyword_order(keyword, seed_keyword, omitted_list, user_a_tags):
         tokens_after = [t for t in tokens_after if t not in STOPWORDS and t != category]
         if tokens_after:
             b_tag = tokens_after[-1]
-            d_tokens = tokens_after[:-1]
-            d_tag = " ".join(d_tokens) if d_tokens else ""
         elif tokens_before:
             b_tag = tokens_before[-1]
-            d_tag = ""
         else:
             b_tag = ""
-            d_tag = ""
         c_tag = " ".join(tokens_before) if tokens_before else ""
     else:
         tokens_all = [t for t in raw_tokens if t not in STOPWORDS]
@@ -166,16 +174,12 @@ def process_keyword_order(keyword, seed_keyword, omitted_list, user_a_tags):
         else:
             b_tag = ""
             c_tag = ""
-        d_tag = ""
     
     if b_tag == category:
         b_tag = ""
     if c_tag == category:
         c_tag = ""
-    if d_tag == category or d_tag == b_tag:
-        d_tag = ""
-    
-    return (category, b_tag, c_tag, d_tag)
+    return (category, b_tag, c_tag)
 
 # --- Streamlit App Interface ---
 
@@ -187,8 +191,8 @@ if mode == "Candidate Theme Extraction":
     st.markdown(
         """
         This mode uses KeyBERT to extract candidate keyphrases from your keyword list,
-        normalizes them to group singular/plural variants and different word orders,
-        and then provides recommended tag components.
+        groups singular/plural variants and different word orders together,
+        and then provides a recommended three-tag structure (A:Tag, B:Tag, C:Tag) for each candidate theme.
         """
     )
     uploaded_file = st.file_uploader("Upload CSV/Excel File", type=["csv", "xls", "xlsx"], key="cand")
@@ -223,7 +227,7 @@ if mode == "Candidate Theme Extraction":
                 progress_bar.progress((idx + 1) / len(keywords_list))
             progress_bar.empty()
             
-            # Group candidate themes by canonical form (sorted normalized tokens).
+            # Group candidate themes by canonical form.
             grouped = {}
             for phrase in all_phrases:
                 norm_phrase = normalize_phrase(phrase)
@@ -236,7 +240,6 @@ if mode == "Candidate Theme Extraction":
             for canon, phrases in grouped.items():
                 freq = len(phrases)
                 if freq >= min_freq:
-                    # Choose the most common candidate from the group.
                     rep = Counter(phrases).most_common(1)[0][0]
                     candidate_themes[rep] = freq
             
@@ -248,17 +251,16 @@ if mode == "Candidate Theme Extraction":
             else:
                 st.write("No candidate themes met the minimum frequency threshold.")
             
-            # Provide recommended tag structure for each candidate theme.
+            # Provide recommended tag structure (three tags) for each candidate theme.
             recommendations = []
             for theme, freq in candidate_themes.items():
-                a_tag, b_tag, c_tag, d_tag = extract_candidate_tags(theme)
+                a_tag, b_tag, c_tag = extract_candidate_tags_three(theme)
                 recommendations.append({
                     "Theme": theme,
                     "Frequency": freq,
                     "A:Tag (Category)": a_tag,
                     "B:Tag": b_tag,
-                    "C:Tag": c_tag,
-                    "D:Tag": d_tag
+                    "C:Tag": c_tag
                 })
             rec_df = pd.DataFrame(recommendations)
             st.write("### Recommended Tag Structure for Each Candidate Theme")
@@ -280,12 +282,10 @@ if mode == "Candidate Theme Extraction":
             st.markdown(
                 """
                 **Next Steps:**  
-                Use the candidate themes and tag recommendations above as a basis for designing your final
-                rule-based tagging system.
+                Review the candidate themes and the recommended three-tag structure above.
+                Use these suggestions as a basis for designing your final rule-based tagging system.
                 """
             )
-            
-            # Optionally, allow the candidate theme recommendations to be downloaded.
             csv_data = rec_df.to_csv(index=False).encode("utf-8")
             st.download_button(
                 label="Download Candidate Theme Recommendations CSV",
@@ -295,15 +295,15 @@ if mode == "Candidate Theme Extraction":
             )
 
 elif mode == "Full Tagging":
-    st.title("Full Keyword Tagging")
+    st.title("Full Keyword Tagging (Three-Tag Version)")
     st.markdown(
         """
-        In this mode, you provide parameters (a Seed Keyword, Omit Phrases, and desired A:Tags),
-        and each keyword in your input file is processed to assign:
-          - **Category (A:Tag)** – based on the first occurrence of any of your A:Tags,
-          - **B:Tag, C:Tag, D:Tag** – derived from the remaining word order.
-        If no A:Tag is found, the Category is set to "other-general" and the remainder of the tokens
-        form the other tags.
+        In this mode, you provide a Seed Keyword (optional), Omit Phrases, and desired A:Tags.
+        Each keyword in your file is processed using word order to assign:
+          - **Category (A:Tag)** – based on the first occurrence of any of your A:Tags (normalized),
+          - **B:Tag** – chosen from the tokens following (or before) the A:Tag,
+          - **C:Tag** – composed of the tokens preceding the A:Tag.
+        If no A:Tag is found, the Category is set to "other-general" and the full token list is used.
         """
     )
     seed_keyword = st.text_input("Seed Keyword (Optional)", value="", key="full_seed")
@@ -329,22 +329,19 @@ elif mode == "Full Tagging":
             categories = []
             b_tags = []
             c_tags = []
-            d_tags = []
             for idx, row in df.iterrows():
                 keyword = row["Keywords"]
-                cat, b_tag, c_tag, d_tag = process_keyword_order(keyword, seed_keyword, omitted_list, user_a_tags)
+                cat, b_tag, c_tag = process_keyword_order(keyword, seed_keyword, omitted_list, user_a_tags)
                 categories.append(cat)
                 b_tags.append(b_tag)
                 c_tags.append(c_tag)
-                d_tags.append(d_tag)
             
             df["Category"] = categories
-            df["B-tag"] = b_tags
-            df["C-tag"] = c_tags
-            df["D-tag"] = d_tags
+            df["B:Tag"] = b_tags
+            df["C:Tag"] = c_tags
             
             st.write("### Full Keyword Tagging Output")
-            st.dataframe(df[["Keywords", "Category", "B-tag", "C-tag", "D-tag"]])
+            st.dataframe(df[["Keywords", "Category", "B:Tag", "C:Tag"]])
             
             csv_data = df.to_csv(index=False).encode("utf-8")
             st.download_button(
