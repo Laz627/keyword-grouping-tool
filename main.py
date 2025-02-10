@@ -1,48 +1,18 @@
 import streamlit as st
 import pandas as pd
 import re
-from collections import Counter
-
-# ---------------------------
-# Imports for KeyBERT & Embeddings
-# ---------------------------
-from keybert import KeyBERT
-from sentence_transformers import SentenceTransformer
-
-# Create a dedicated SentenceTransformer instance for encoding.
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-kw_model = KeyBERT(model=embedding_model)
-
-# ---------------------------
-# Imports for NLP Normalization and POS Tagging
-# ---------------------------
+from nltk import word_tokenize
 import nltk
-from nltk import word_tokenize, pos_tag
-from nltk.stem import WordNetLemmatizer
 
+# Download required NLTK data
 nltk.download('punkt')
-nltk.download('averaged_perceptron_tagger')
-nltk.download('wordnet')
-lemmatizer = WordNetLemmatizer()
 
-# ---------------------------
-# Helper Functions
-# ---------------------------
-def extract_keyphrases(text):
-    """
-    Uses KeyBERT to extract keyphrases at 1-gram, 2-gram, and 3-gram levels.
-    Returns a dictionary with keys "1-gram", "2-gram", and "3-gram".
-    """
-    keyphrases = {}
-    for n in range(1, 4):
-        keywords = kw_model.extract_keywords(text, keyphrase_ngram_range=(n, n), stop_words='english')
-        phrase = keywords[0][0] if keywords else ""
-        keyphrases[f"{n}-gram"] = phrase
-    return keyphrases
+# Define a small set of stopwords for our heuristic.
+STOPWORDS = {"the", "a", "an", "are", "is", "of", "and", "or", "how", "much", "do", "does", "be", "in", "to", "more"}
 
 def omit_phrases(text, omitted_list):
     """
-    Lowercases the text and removes any occurrence of any word in omitted_list.
+    Lowercases the text and removes any occurrence of words in omitted_list.
     """
     result = text.lower()
     for omit in omitted_list:
@@ -50,147 +20,145 @@ def omit_phrases(text, omitted_list):
         result = re.sub(pattern, '', result)
     return result.strip()
 
-def clean_phrase(phrase, seed_keyword, omitted_list):
+def process_keyword_by_order(keyword, omitted_list, user_a_tag, seed_keyword=""):
     """
-    Removes the seed keyword and any omitted phrases from the given phrase.
+    Processes a single keyword based on word order.
+    
+    Steps:
+      1. Lowercase the keyword.
+      2. Remove the seed keyword (if provided) and any omitted phrases.
+      3. Tokenize the cleaned text.
+      4. Find the index of the user‑specified A:Tag (user_a_tag) in the tokens.
+      5. Let tokens_before be all tokens preceding the A:Tag and tokens_after be those following it.
+      6. Remove common stopwords from both lists.
+      7. For B:Tag, if tokens_after exists, choose its last token; otherwise use the last token of tokens_before.
+      8. For C:Tag, if tokens_before (after stopword removal) contains more than one token, join them.
+      9. For D:Tag, if there are more than one token in tokens_after (after stopword removal), join all but the last token.
+      
+    Returns a tuple: (Category, B:Tag, C:Tag, D:Tag)
+    where Category is the user‑specified A:Tag.
     """
-    cleaned = phrase
+    # Step 1: Lowercase the keyword.
+    text = keyword.lower()
+    
+    # Step 2: Remove the seed keyword (if provided) and omitted phrases.
     if seed_keyword:
-        pattern = rf'\b{re.escape(seed_keyword)}\b'
-        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
-    cleaned = omit_phrases(cleaned, omitted_list)
-    return cleaned.strip()
-
-def normalize_phrase(phrase):
-    """
-    Tokenizes, lowercases, and lemmatizes the phrase (as nouns) so that similar words are unified.
-    """
-    tokens = word_tokenize(phrase.lower())
-    norm_tokens = [lemmatizer.lemmatize(t, pos='n') for t in tokens]
-    return " ".join(norm_tokens)
-
-def extract_adjective(text):
-    """
-    Uses NLTK to extract the first adjective from the text.
-    Returns an empty string if none is found.
-    """
+        pattern = rf'\b{re.escape(seed_keyword.lower())}\b'
+        text = re.sub(pattern, '', text)
+    text = omit_phrases(text, omitted_list)
+    
+    # Step 3: Tokenize.
     tokens = word_tokenize(text)
-    tags = pos_tag(tokens)
-    for word, tag in tags:
-        if tag.startswith('JJ'):  # adjective
-            return word.lower()
-    return ""
-
-def process_keyword(keyword, seed_keyword, omitted_list):
-    """
-    Process a single keyword string:
-      - Extracts keyphrases using KeyBERT.
-      - Cleans each keyphrase by removing the seed keyword and omitted phrases.
-      - Normalizes the cleaned keyphrases.
-      - Uses:
-          * Normalized 1-gram as the Category.
-          * The first extracted adjective (if any) as the Adjective.
-          * Normalized 2-gram (with the Category removed if it is a prefix) as the C-tag.
-          * Normalized 3-gram (with occurrences of Category or Adjective removed) as the D-tag.
-    Returns a tuple: (Category, Adjective, C-tag, D-tag).
-    """
-    # Extract keyphrases from the keyword text.
-    keyphrases = extract_keyphrases(keyword)
-    core1 = clean_phrase(keyphrases.get("1-gram", ""), seed_keyword, omitted_list)
-    core2 = clean_phrase(keyphrases.get("2-gram", ""), seed_keyword, omitted_list)
-    core3 = clean_phrase(keyphrases.get("3-gram", ""), seed_keyword, omitted_list)
-    # Normalize each extracted phrase.
-    norm1 = normalize_phrase(core1) if core1 else ""
-    norm2 = normalize_phrase(core2) if core2 else ""
-    norm3 = normalize_phrase(core3) if core3 else ""
-    # Category is taken as the normalized 1-gram.
-    category = norm1
-    # Extract an adjective from the original keyword text.
-    adjective = extract_adjective(keyword)
-    # For C-tag, use the normalized 2-gram.
-    c_tag = norm2
-    if category and c_tag.startswith(category):
-        c_tag = c_tag[len(category):].strip()
-    # For D-tag, use the normalized 3-gram and remove occurrences of the Category and adjective.
-    d_tag = norm3
-    if category:
-        d_tag = d_tag.replace(category, "").strip()
-    if adjective:
-        d_tag = d_tag.replace(adjective, "").strip()
-    return category, adjective, c_tag, d_tag
-
-def process_keywords(df, seed_keyword, omitted_list):
-    """
-    Processes each keyword in the DataFrame (expects a "Keywords" column).
-    Returns the modified DataFrame with new columns:
-      "Category", "Adjective", "C-tag", "D-tag"
-    and an aggregated summary of tag counts.
-    """
-    categories = []
-    adjectives = []
-    c_tags = []
-    d_tags = []
     
-    for idx, row in df.iterrows():
-        keyword = row["Keywords"]
-        cat, adj, ctag, dtag = process_keyword(keyword, seed_keyword, omitted_list)
-        categories.append(cat)
-        adjectives.append(adj)
-        c_tags.append(ctag)
-        d_tags.append(dtag)
+    # Step 4: Find the index of the user‑specified A:Tag.
+    try:
+        idx = tokens.index(user_a_tag.lower())
+    except ValueError:
+        # If the specified A:Tag is not found, return empty tags.
+        return ("", "", "", "")
     
-    df["Category"] = categories
-    df["Adjective"] = adjectives
-    df["C-tag"] = c_tags
-    df["D-tag"] = d_tags
+    # Step 5: Split tokens.
+    tokens_before = tokens[:idx]
+    tokens_after = tokens[idx+1:]
     
-    # Build an aggregated summary for each tag column.
-    summary = {}
-    for col in ["Category", "Adjective", "C-tag", "D-tag"]:
-        counts = Counter(df[col])
-        if "" in counts:
-            del counts[""]
-        summary[col] = dict(counts)
-    return df, summary
+    # Step 6: Remove stopwords.
+    tokens_before_filtered = [t for t in tokens_before if t not in STOPWORDS]
+    tokens_after_filtered = [t for t in tokens_after if t not in STOPWORDS]
+    
+    # Step 7: Determine B:Tag.
+    if tokens_after_filtered:
+        b_tag = tokens_after_filtered[-1]
+    elif tokens_before_filtered:
+        b_tag = tokens_before_filtered[-1]
+    else:
+        b_tag = ""
+    
+    # Step 8: Determine C:Tag.
+    c_tag = " ".join(tokens_before_filtered) if len(tokens_before_filtered) > 1 else ""
+    
+    # Step 9: Determine D:Tag.
+    d_tag = " ".join(tokens_after_filtered[:-1]) if len(tokens_after_filtered) > 1 else ""
+    
+    # Category is the user-specified A:Tag.
+    return (user_a_tag.lower(), b_tag, c_tag, d_tag)
 
 # ---------------------------
 # Streamlit Interface
 # ---------------------------
-st.title("Dynamic Keyword Tagging")
+st.title("User-Specified Keyword Tagging")
 st.markdown(
     """
-    Upload a CSV or Excel file with a **Keywords** column.
+    **Instructions:**
     
-    The app will dynamically extract and assign tags based on the content of each keyword.
+    1. Upload a CSV or Excel file that contains a column named **Keywords**.
+    2. Enter an optional **Seed Keyword** to be removed from each keyword.
+    3. Enter a comma‑separated list of **Omit Phrases** (for example, "pella, andersen") that should be removed.
+    4. Enter the desired **A:Tag** (the classification keyword) that should appear in each keyword.
     
-    **Options:**
-    - **Seed Keyword:** Any text you wish to remove from the keywords.
-    - **Omit Phrases:** A comma-separated list of words (for example, "Pella") that will be omitted from the tag derivation.
+    The app will then process each keyword as follows:
+      - It finds the specified A:Tag in the keyword (after cleaning).
+      - It uses word order to assign:
+          • **B:Tag:** the word (or token) immediately following (or, if none, preceding) the A:Tag.
+          • **C:Tag:** additional modifier from words preceding the A:Tag (if available).
+          • **D:Tag:** additional modifier from words following the A:Tag (if more than one word exists).
+    
+    **Examples:**
+    
+    - *Keyword:* "how much are pella replacement windows"  
+      *Omit:* "pella"  
+      *A:Tag:* "windows"  
+      → **Category:** windows, **B:Tag:** replacement, **C:Tag:** (empty)
+    
+    - *Keyword:* "are pella or andersen windows more expensive"  
+      *Omit:* "pella, andersen"  
+      *A:Tag:* "windows"  
+      → **Category:** windows, **B:Tag:** expensive, **C:Tag:** (empty)
+    
+    - *Keyword:* "pella hurricane shield windows cost"  
+      *Omit:* "pella"  
+      *A:Tag:* "windows"  
+      → **Category:** windows, **B:Tag:** cost, **C:Tag:** hurricane shield
     """
 )
+
 seed_keyword = st.text_input("Seed Keyword (Optional)", value="")
-omit_input = st.text_input("Omit Phrases (comma-separated)", value="")
-uploaded_file = st.file_uploader("Upload file", type=["csv", "xls", "xlsx"])
+omit_input = st.text_input("Omit Phrases (comma‑separated)", value="")
+a_tag_input = st.text_input("A:Tag (Classification Keyword)", value="windows")
+uploaded_file = st.file_uploader("Upload CSV/Excel file", type=["csv", "xls", "xlsx"])
 
 if uploaded_file:
+    # Load file
     if uploaded_file.name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
     else:
         df = pd.read_excel(uploaded_file)
+    
+    # Parse omitted phrases into a list.
     omitted_list = [s.strip() for s in omit_input.split(",") if s.strip()]
     
-    with st.spinner("Processing keywords..."):
-        result_df, tag_summary = process_keywords(df, seed_keyword, omitted_list)
+    categories = []
+    b_tags = []
+    c_tags = []
+    d_tags = []
+    
+    # Process each keyword in the DataFrame.
+    for idx, row in df.iterrows():
+        keyword = row["Keywords"]
+        cat, b, c, d = process_keyword_by_order(keyword, omitted_list, a_tag_input, seed_keyword)
+        categories.append(cat)
+        b_tags.append(b)
+        c_tags.append(c)
+        d_tags.append(d)
+    
+    df["Category"] = categories
+    df["B-tag"] = b_tags
+    df["C-tag"] = c_tags
+    df["D-tag"] = d_tags
     
     st.write("### Keyword Tagging Output")
-    st.dataframe(result_df[["Keywords", "Category", "Adjective", "C-tag", "D-tag"]])
+    st.dataframe(df[["Keywords", "Category", "B-tag", "C-tag", "D-tag"]])
     
-    st.write("### Aggregated Tag Summary")
-    for tag_col, counts in tag_summary.items():
-        st.write(f"**{tag_col}**")
-        st.write(counts)
-    
-    csv_data = result_df.to_csv(index=False).encode("utf-8")
+    csv_data = df.to_csv(index=False).encode("utf-8")
     st.download_button(
         label="Download Tagged Keywords CSV",
         data=csv_data,
