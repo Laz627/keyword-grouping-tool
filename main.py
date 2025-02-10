@@ -87,19 +87,15 @@ def process_keywords(df, seed_keyword, n_clusters, extract_adjectives):
         st.error("Error: The dataframe must contain a column named 'Keywords'.")
         return None, None
 
-    # Prepare seed words from the seed_keyword input
     seed_words = seed_keyword.lower().split() if seed_keyword else []
     
     progress_bar = st.progress(0)
     all_cleaned_phrases = []  # To store all phrases (lowercased) across rows
     extracted_data = []       # To store per-row extracted data
 
-    # Loop through each keyword row and extract & clean keyphrases
     for idx, row in df.iterrows():
         kp = extract_keyphrases(row['Keywords'])
-        # Clean each extracted phrase by removing the seed keyword(s)
         cleaned_kp = {k: clean_phrase(v, seed_keyword, seed_words) for k, v in kp.items()}
-        # Combine all non-empty cleaned keyphrases into a set for this row
         combined_phrases = list(set([phrase.lower() for phrase in cleaned_kp.values() if phrase]))
         all_cleaned_phrases.extend(combined_phrases)
         extracted_data.append({
@@ -111,55 +107,45 @@ def process_keywords(df, seed_keyword, n_clusters, extract_adjectives):
         progress_bar.progress((idx + 1) / len(df))
     progress_bar.empty()
 
-    # Get unique phrases from all rows
     unique_phrases = list(set(all_cleaned_phrases))
     if not unique_phrases:
         st.error("No keyphrases were extracted from the data.")
         return None, None
 
-    # Compute embeddings for unique phrases using the underlying transformer model
+    # Use the explicitly loaded SentenceTransformer model to encode phrases
     embeddings = embedding_model.encode(unique_phrases)
 
-    # Use KMeans clustering to group similar phrases
-    k = min(n_clusters, len(unique_phrases))  # Ensure we do not exceed available phrases
+    k = min(n_clusters, len(unique_phrases))
     kmeans = KMeans(n_clusters=k, random_state=42)
     cluster_labels = kmeans.fit_predict(embeddings)
 
-    # Create a mapping from each phrase to its cluster label
     phrase_to_cluster = {phrase: label for phrase, label in zip(unique_phrases, cluster_labels)}
-
-    # Group phrases by cluster to determine a representative theme for each
     cluster_to_phrases = {}
     for phrase, label in phrase_to_cluster.items():
         cluster_to_phrases.setdefault(label, []).append(phrase)
     
-    # For each cluster, select the phrase that appears most frequently (or fallback to any phrase)
     cluster_themes = {}
     for label, phrases in cluster_to_phrases.items():
         freq = {phrase: all_cleaned_phrases.count(phrase) for phrase in phrases}
         theme_phrase = max(freq, key=freq.get) if freq else phrases[0]
         cluster_themes[label] = theme_phrase.capitalize()
 
-    # For each row, determine its theme by checking which cluster(s) its phrases belong to
     assigned_themes = []
     for item in extracted_data:
         clusters_in_row = [phrase_to_cluster[phrase] for phrase in item['Combined'] if phrase in phrase_to_cluster]
         if clusters_in_row:
-            # Assign the theme corresponding to the most frequently occurring cluster in the row
             cluster_label = max(set(clusters_in_row), key=clusters_in_row.count)
             theme = cluster_themes[cluster_label]
         else:
             theme = "Other"
         assigned_themes.append(theme)
 
-    # Build the result DataFrame with additional columns for keyphrases and themes
     df_result = df.copy()
     df_result['Core (1-gram)'] = [data['Keyphrases']['1-gram'] for data in extracted_data]
     df_result['Core (2-gram)'] = [data['Keyphrases']['2-gram'] for data in extracted_data]
     df_result['Core (3-gram)'] = [data['Keyphrases']['3-gram'] for data in extracted_data]
     df_result['Theme'] = assigned_themes
 
-    # Optionally, extract adjectives from the original keyword text
     if extract_adjectives:
         df_result['Adjectives'] = df_result['Keywords'].apply(
             lambda text: ", ".join(extract_adjectives_from_text(text))
