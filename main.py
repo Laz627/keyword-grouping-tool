@@ -9,12 +9,13 @@ from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
 from sklearn.cluster import KMeans
 
-# --- NLTK for Tokenization and Lemmatization ---
+# --- NLTK for Tokenization, POS tagging, and Lemmatization ---
 import nltk
-from nltk import word_tokenize
+from nltk import word_tokenize, pos_tag
 from nltk.stem import WordNetLemmatizer
 
 nltk.download('punkt')
+nltk.download('averaged_perceptron_tagger')
 nltk.download('wordnet')
 lemmatizer = WordNetLemmatizer()
 
@@ -28,8 +29,7 @@ kw_model = KeyBERT(model=embedding_model)
 
 def normalize_token(token):
     """
-    Lowercase and lemmatize a token in noun mode.
-    Also, 'vs' -> 'v'.
+    Lowercase and lemmatize a token (noun mode). Also converts 'vs' -> 'v'.
     """
     token = token.lower()
     if token == "vs":
@@ -38,81 +38,98 @@ def normalize_token(token):
 
 def normalize_phrase(phrase):
     """
-    Tokenize and normalize the phrase (lowercase, lemmatize).
-    Preserves token order but lumps singular/plural forms.
+    Tokenize and normalize the phrase (lowercasing, lemmatizing). Preserves word order,
+    which groups singular/plural forms but doesn't reorder tokens.
     """
     tokens = word_tokenize(phrase.lower())
     return " ".join(normalize_token(t) for t in tokens if t.isalnum())
 
 def canonicalize_phrase(phrase):
     """
-    Canonical form for grouping:
-    - Remove the token "series" (normalized),
-    - Sort the remaining tokens.
-    E.g. "pella 350 series" -> "350 pella"
+    Produces a canonical form for grouping. Removes token 'series' and sorts the rest.
+    So 'pella 350 series' -> '350 pella', unifying variants.
     """
     tokens = word_tokenize(phrase.lower())
     norm = [normalize_token(t) for t in tokens if t.isalnum() and normalize_token(t) != "series"]
     return " ".join(sorted(norm))
 
-def three_tag_split(canon_tokens, user_a_tags):
+def split_tokens_pos_based(tokens, user_a_tags):
     """
-    Splits tokens into (A_tag, B_tag, C_tag):
-      1. If any user A‑tag is found, pick the first that appears; remove it from tokens => A:Tag.
-      2. If no forced A:Tag was found, fallback: A:Tag = last token (remove it).
-      3. B:Tag = first leftover token (remove it) if any.
-      4. C:Tag = everything else joined by space.
+    Splits the token list into A, B, and C with a POS-based approach:
+      1) If any user-supplied A‑tag is found, pick that as A:Tag and remove it;
+         else fallback to the last token.
+      2) From leftover, pick the *first adjective or gerund* (POS = JJ/JJR/JJS or VBG) as B:Tag.
+         If none, pick the first leftover token as B:Tag.
+      3) The rest => C:Tag (joined by space).
     """
-    a_tag, b_tag, c_tag = "", "", ""
+    # We'll keep a copy for POS tagging
+    leftover = tokens[:]
 
-    # Step 1: Force user A‑tag if present
+    # Step 1: Force user A:Tag if present
+    a_tag = ""
     for tag in user_a_tags:
-        if tag in canon_tokens:
+        if tag in leftover:
             a_tag = tag
-            canon_tokens.remove(tag)
+            leftover.remove(tag)
             break
+    # If no forced A:Tag, fallback to the last leftover token
+    if not a_tag and leftover:
+        a_tag = leftover[-1]
+        leftover = leftover[:-1]
 
-    # Fallback if no forced A‑tag:
-    if not a_tag and canon_tokens:
-        a_tag = canon_tokens[-1]
-        canon_tokens = canon_tokens[:-1]
+    # Step 2: B:Tag => the first token with POS in [JJ, JJR, JJS, VBG], else the first leftover
+    b_tag = ""
+    if leftover:
+        # We'll POS-tag these leftover tokens
+        # Reconstruct them as text for tagging
+        leftover_text = " ".join(leftover)
+        pos_result = pos_tag(leftover_text.split())  # simple usage
+        # pos_result is list of (word, tag)
+        # We'll find the first with tag starting with 'JJ' or 'VBG'
+        # but also watch the leftover index carefully
+        token_indices_by_pos = {}
+        for i, (word, tag) in enumerate(pos_result):
+            # naive matching
+            if tag.startswith("JJ") or tag == "VBG":
+                # found our B:Tag
+                b_tag = word
+                # remove from leftover
+                # we find the actual index in leftover that matches 'word'
+                # (in case there are duplicates)
+                if word in leftover:
+                    leftover.remove(word)
+                break
+        # If still no B:Tag => pick the first leftover
+        if not b_tag and leftover:
+            b_tag = leftover[0]
+            leftover = leftover[1:]
 
-    # Step 2: B‑tag => first leftover if any
-    if canon_tokens:
-        b_tag = canon_tokens[0]
-        canon_tokens = canon_tokens[1:]
-
-    # Step 3: rest => c_tag
-    if canon_tokens:
-        c_tag = " ".join(canon_tokens)
-
+    # Step 3: The remainder => c
+    c_tag = " ".join(leftover) if leftover else ""
     return (a_tag, b_tag, c_tag)
 
-# ------------------------
-# FULL TAGGING HELPER
-# ------------------------
 
 def classify_keyword_three(keyword, seed_keyword, omitted_list, user_a_tags):
     """
     For a single keyword:
-      1) remove seed & omitted phrases,
-      2) KeyBERT => top candidate phrase,
-      3) normalize & canonicalize,
-      4) split tokens => A,B,C.
-    If no candidate => ("other-general","","").
+     1) Remove seed & omit phrases
+     2) Extract top candidate phrase w/ KeyBERT
+     3) Normalize & canonicalize
+     4) Split tokens using the POS-based approach
+    If no candidate, => ("other-general","","").
     """
     text = keyword.lower()
-    # Remove seed
+    # remove seed
     if seed_keyword:
         pattern = rf'\b{re.escape(seed_keyword.lower())}\b'
         text = re.sub(pattern, '', text)
-    # Remove omitted
+    # remove omitted
     for omit in omitted_list:
-        pat = rf'\b{re.escape(omit)}\b'
-        text = re.sub(pat, '', text)
+        pattern = rf'\b{re.escape(omit.lower())}\b'
+        text = re.sub(pattern, '', text)
     text = text.strip()
 
-    # Extract top candidate
+    # top_n=1
     keyphrases = kw_model.extract_keywords(text, keyphrase_ngram_range=(1,3), stop_words='english', top_n=1)
     if not keyphrases:
         return ("other-general","","")
@@ -123,18 +140,17 @@ def classify_keyword_three(keyword, seed_keyword, omitted_list, user_a_tags):
     if not canon:
         return ("other-general","","")
 
-    # turn canonical string into list of tokens
     tokens = canon.split()
-    return three_tag_split(tokens, user_a_tags)
+    return split_tokens_pos_based(tokens, user_a_tags)
 
-# ------------------------
-# CANDIDATE THEME EXTRACTION
-# ------------------------
+# -------------------------------------------
+# Candidate theme extraction for all keyphrases
+# -------------------------------------------
 
 def extract_candidate_themes(keywords_list, top_n):
     """
-    For each keyword, extract up to top_n keyphrases (1..3-grams).
-    Return all extracted phrases as a list (lowercased).
+    Use KeyBERT to get up to top_n keyphrases for each keyword (1..3-gram).
+    Return a combined list of extracted phrases.
     """
     all_phrases = []
     for kw in keywords_list:
@@ -145,8 +161,8 @@ def extract_candidate_themes(keywords_list, top_n):
 
 def group_candidate_themes(all_phrases, min_freq):
     """
-    Group by canonical form. Return {rep: freq}.
-    rep = most common normalized string in that canonical group.
+    Groups candidate phrases by canonical form => picks a representative
+    and counts frequency. Return {representative_string: freq}.
     """
     grouped = {}
     for phrase in all_phrases:
@@ -159,35 +175,30 @@ def group_candidate_themes(all_phrases, min_freq):
     for canon, sublist in grouped.items():
         freq = len(sublist)
         if freq >= min_freq:
+            # pick the most common normalized phrase
             rep = Counter(sublist).most_common(1)[0][0]
             candidate_themes[rep] = freq
     return candidate_themes
 
-# ------------------------
-# STREAMLIT UI
-# ------------------------
+# -------------------------------------------
+# Streamlit UI
+# -------------------------------------------
 
 st.sidebar.title("Select Mode")
 mode = st.sidebar.radio("Choose an option:", ("Candidate Theme Extraction", "Full Tagging"))
 
 if mode == "Candidate Theme Extraction":
-    st.title("Generic Candidate Theme Extraction with KeyBERT")
-    st.write("""
-    **This mode** extracts all candidate keyphrases from your keyword list, 
-    normalizes & canonicalizes them to group similar phrases, 
-    and shows their frequency. Then it recommends a default 3‑tag split 
-    (A:Tag, B:Tag, C:Tag) with no domain-specific forcing.
-    """)
-
-    file = st.file_uploader("Upload CSV/Excel with a 'Keywords' column", type=["csv","xls","xlsx"])
+    st.title("Candidate Theme Extraction (POS-based 3-Tag Example)")
+    file = st.file_uploader("Upload CSV/Excel with 'Keywords' column", type=["csv","xls","xlsx"])
     num_keywords = st.number_input("Process first N keywords (0=all)", min_value=0, value=0)
     top_n = st.number_input("Keyphrases per keyword", min_value=1, value=3)
     min_freq = st.number_input("Min frequency for candidate theme", min_value=1, value=2)
     cluster_count = st.number_input("Number of clusters (0=skip)", min_value=0, value=0)
 
     if file:
+        # load the DF
         try:
-            if file.name.endswith('.csv'):
+            if file.name.endswith(".csv"):
                 df = pd.read_csv(file)
             else:
                 df = pd.read_excel(file)
@@ -202,73 +213,71 @@ if mode == "Candidate Theme Extraction":
             if num_keywords>0:
                 keywords_list = keywords_list[:num_keywords]
 
-            st.write("Extracting candidate keyphrases using KeyBERT...")
             all_phrases = extract_candidate_themes(keywords_list, top_n)
             candidate_map = group_candidate_themes(all_phrases, min_freq)
 
             if candidate_map:
-                cdf = pd.DataFrame(list(candidate_map.items()), columns=["Representative Theme","Frequency"])
+                cdf = pd.DataFrame(list(candidate_map.items()), columns=["Candidate Theme","Frequency"])
                 cdf = cdf.sort_values(by="Frequency", ascending=False)
 
-                # For demonstration, we do a default split with user_a_tags = {} 
+                # For demonstration, let's do a POS-based 3-tag split with no user a tags
                 splitted = []
-                for theme in cdf["Representative Theme"]:
+                for theme in cdf["Candidate Theme"]:
                     canon = canonicalize_phrase(normalize_phrase(theme))
                     tokens = canon.split()
-                    a,b,c = three_tag_split(tokens, user_a_tags=set())
+                    # no forced user A tags => empty set
+                    a,b,c = split_tokens_pos_based(tokens, set())
                     splitted.append((a,b,c))
 
-                cdf["A:Tag (Recommended)"] = [s[0] for s in splitted]
-                cdf["B:Tag (Recommended)"] = [s[1] for s in splitted]
-                cdf["C:Tag (Recommended)"] = [s[2] for s in splitted]
+                cdf["A:Tag (Rec)"] = [x[0] for x in splitted]
+                cdf["B:Tag (Rec)"] = [x[1] for x in splitted]
+                cdf["C:Tag (Rec)"] = [x[2] for x in splitted]
 
                 st.dataframe(cdf)
 
-                # optional clustering
+                # optional cluster
                 if cluster_count>0 and len(candidate_map)>=cluster_count:
-                    st.write("### Clusters:")
                     reps = list(candidate_map.keys())
                     embeddings = embedding_model.encode(reps)
                     km = KMeans(n_clusters=cluster_count, random_state=42)
                     labs = km.fit_predict(embeddings)
-                    clusters = {}
+                    cluster_dict = {}
                     for lab,rep in zip(labs,reps):
-                        clusters.setdefault(lab,[]).append(rep)
-                    for lab,group in clusters.items():
-                        st.write(f"**Cluster {lab}:** {', '.join(group)}")
-                
+                        cluster_dict.setdefault(lab,[]).append(rep)
+                    st.write("### Clusters:")
+                    for lab,group in cluster_dict.items():
+                        st.write(f"**Cluster {lab}** => {', '.join(group)}")
+
                 csvdata = cdf.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    "Download Candidate Theme CSV",
-                    data=csvdata,
-                    file_name="candidate_theme_recommendations.csv",
-                    mime="text/csv"
+                    "Download Candidate Themes CSV",
+                    csvdata,
+                    "candidate_themes_pos_tagging.csv",
+                    "text/csv"
                 )
             else:
-                st.write("No candidate themes met the frequency threshold.")
+                st.write("No candidate themes met frequency threshold.")
 
 elif mode=="Full Tagging":
-    st.title("Generic Full Tagging (3-Tag) w/ User A-Tags")
+    st.title("Full Keyword Tagging (3-Tag, POS-based for leftover tokens)")
     st.write("""
     For each keyword:
-    1) Remove seed + omitted text
-    2) Extract top candidate via KeyBERT
-    3) Normalize + canonicalize
-    4) If user A-tag is found, that becomes A:Tag
-    5) Else fallback to last token as A:Tag
-    6) B:Tag = first leftover
-    7) C:Tag = rest
+     1) Remove seed + omitted text,
+     2) KeyBERT => top candidate,
+     3) Normalize & canonicalize,
+     4) A:Tag => user A-tag if found, else last token,
+     5) B:Tag => first leftover token with POS=JJ/JJR/JJS/VBG, else first leftover,
+     6) C:Tag => remainder.
     """)
 
-    seed = st.text_input("Seed Keyword (optional)")
-    omit_input = st.text_input("Omit Phrases (comma-separated)")
-    user_atags_str = st.text_input("User A-Tags (comma-separated)", "door, window")
-
+    seed = st.text_input("Seed Keyword (Optional)")
+    omit_str = st.text_input("Omit Phrases (comma-separated)")
+    user_atags_str = st.text_input("User A:Tags (comma-separated)", value="door, window")
     file = st.file_uploader("Upload CSV/Excel with 'Keywords' column", type=["csv","xls","xlsx"])
 
     if file:
         try:
-            if file.name.endswith('.csv'):
+            if file.name.endswith(".csv"):
                 df = pd.read_csv(file)
             else:
                 df = pd.read_excel(file)
@@ -279,20 +288,19 @@ elif mode=="Full Tagging":
         if "Keywords" not in df.columns:
             st.error("File must have a 'Keywords' column.")
         else:
-            omitted_list = [o.strip().lower() for o in omit_input.split(",") if o.strip()]
+            omitted_list = [x.strip().lower() for x in omit_str.split(",") if x.strip()]
             user_a_tags = set(normalize_token(a.strip()) for a in user_atags_str.split(",") if a.strip())
 
-            a_tags, b_tags, c_tags = [], [], []
-
+            A_tags, B_tags, C_tags = [], [], []
             for kw in df["Keywords"]:
                 a,b,c = classify_keyword_three(kw, seed, omitted_list, user_a_tags)
-                a_tags.append(a)
-                b_tags.append(b)
-                c_tags.append(c)
+                A_tags.append(a)
+                B_tags.append(b)
+                C_tags.append(c)
 
-            df["A:Tag"] = a_tags
-            df["B:Tag"] = b_tags
-            df["C:Tag"] = c_tags
+            df["A:Tag"] = A_tags
+            df["B:Tag"] = B_tags
+            df["C:Tag"] = C_tags
 
             st.dataframe(df[["Keywords","A:Tag","B:Tag","C:Tag"]])
 
@@ -300,6 +308,57 @@ elif mode=="Full Tagging":
             st.download_button(
                 "Download Full Tagging CSV",
                 data=csvdata,
-                file_name="full_tagging_output.csv",
+                file_name="full_tagging_pos_based.csv",
                 mime="text/csv"
             )
+
+# ----------------------
+# The POS-based leftover splitting:
+# ----------------------
+
+def split_tokens_pos_based(tokens, user_a_tags):
+    """
+    1) Force A:Tag => user A tag if found, else last token.
+    2) leftover => B => first 'JJ*/VBG' or else first leftover
+    3) leftover => C => remainder
+    """
+    # We'll do a copy for leftover
+    leftover = tokens[:]
+
+    # Step 1: Force user A tag
+    a_tag = ""
+    for tag in user_a_tags:
+        if tag in leftover:
+            a_tag = tag
+            leftover.remove(tag)
+            break
+    if not a_tag and leftover:
+        a_tag = leftover[-1]
+        leftover = leftover[:-1]
+
+    # Step 2: B tag => first leftover token that is an adjective or VBG, else first leftover
+    b_tag = ""
+    if leftover:
+        # We'll do a quick POS tagging of leftover
+        # Reconstruct them as text
+        leftover_text = " ".join(leftover)
+        pairs = pos_tag(leftover_text.split())  # list of (word, pos)
+        # find the first that has pos in [JJ, JJR, JJS, VBG]
+        found_idx = None
+        for i,(word, posx) in enumerate(pairs):
+            if posx.startswith("JJ") or posx=="VBG":
+                b_tag = word
+                found_idx = i
+                break
+        if b_tag:
+            # remove it from leftover
+            if b_tag in leftover:
+                leftover.remove(b_tag)
+        else:
+            # pick the first leftover
+            b_tag = leftover[0]
+            leftover = leftover[1:]
+    # Step 3: rest => c
+    c_tag = " ".join(leftover) if leftover else ""
+
+    return (a_tag, b_tag, c_tag)
