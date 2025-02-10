@@ -54,54 +54,43 @@ def canonicalize_phrase(phrase):
 
 def pick_tags_pos_based(tokens, user_a_tags):
     """
-    Given a list of candidate tokens (in original order), assign single tokens for A, B, and C as follows:
+    Given a list of candidate tokens (in their original order), assign single tokens for A, B, and C tags as follows:
     
     1. A:Tag  
-       – Scan tokens in order looking for a token that “contains” one of the allowed A:tags 
-         (or vice‐versa).  
-       – If found, remove that token and use the allowed token as A:Tag.
-       – If no token qualifies, set A:Tag = "general-other" (and do not remove any token).
+       - Scan the tokens (in order) for one that “contains” an allowed A:tag (or vice‐versa).
+       - If found, remove that token from the list and set A:Tag to the allowed token.
+       - If none is found, force A:Tag to "general-other" (and do not remove any token).
     
     2. B:Tag and C:Tag  
-       – If there are exactly two tokens remaining, then:
-           • If the allowed token was found at index 0, swap the order of the two remaining tokens.
-             (This addresses cases like "pella door installation cost" so that B becomes "cost" and C "installation".)
-           • Otherwise, keep the natural order.
-       – If more than two tokens remain, choose B = first token and C = last token.
-       – If fewer than 2 tokens remain, leave B and C as blank.
+       - Take the first two tokens from the (remaining) list as B:Tag and C:Tag respectively.
+       - (If only one token remains, assign it to B:Tag and leave C:Tag blank; if none, leave both blank.)
     """
-    a_index = None
+    # Make a copy so as not to modify the original list
+    tokens_copy = tokens[:]  
     a_tag = None
-    for i, token in enumerate(tokens):
+    # Look for an allowed A:tag in order:
+    for i, token in enumerate(tokens_copy):
         for allowed in user_a_tags:
-            # "Contains" matching (for example, "window" in "windows")
             if allowed in token or token in allowed:
-                a_index = i
                 a_tag = allowed
+                # Remove the token from the list
+                tokens_copy.pop(i)
                 break
         if a_tag is not None:
             break
-
-    if a_tag is not None:
-        # Allowed A:Tag found; remove that token.
-        new_tokens = tokens[:a_index] + tokens[a_index+1:]
-    else:
+    # If no allowed A:Tag was found, force it to "general-other"
+    if a_tag is None:
         a_tag = "general-other"
-        new_tokens = tokens[:]  # leave tokens unchanged
-
-    n = len(new_tokens)
-    if n < 2:
-        b_tag, c_tag = "", ""
-    elif n == 2:
-        # For exactly two tokens, swap order if the allowed token was at index 0
-        if a_index == 0:
-            b_tag, c_tag = new_tokens[1], new_tokens[0]
-        else:
-            b_tag, c_tag = new_tokens[0], new_tokens[1]
+    # Now force exactly one-word tags for B and C from the remaining tokens.
+    if len(tokens_copy) >= 2:
+        b_tag = tokens_copy[0]
+        c_tag = tokens_copy[1]
+    elif len(tokens_copy) == 1:
+        b_tag = tokens_copy[0]
+        c_tag = ""
     else:
-        # For more than 2 tokens, take the first token as B and the last token as C.
-        b_tag, c_tag = new_tokens[0], new_tokens[-1]
-
+        b_tag = ""
+        c_tag = ""
     return a_tag, b_tag, c_tag
 
 def classify_keyword_three(keyword, seed, omitted_list, user_a_tags):
