@@ -36,86 +36,83 @@ def normalize_token(token):
 
 def normalize_phrase(phrase):
     """
-    Lowercase, tokenize, keep alphanum, lemmatize in noun mode.
-    Preserves order so that e.g. 'pella windows cost' => 'pella window cost'
+    Lowercase, tokenize, keep alphanum, and lemmatize in noun mode.
+    For example, 'pella windows cost' becomes 'pella window cost'.
     """
     tokens = word_tokenize(phrase.lower())
     return " ".join(normalize_token(t) for t in tokens if t.isalnum())
 
 def canonicalize_phrase(phrase):
     """
-    Remove 'series' tokens, then sort.
-    e.g. 'pella 350 series' => '350 pella'
+    Remove unwanted tokens (for example "series") while preserving the original order.
+    For example, 'pella 350 series' becomes 'pella 350'.
     """
     tokens = word_tokenize(phrase.lower())
+    # Remove tokens that normalize to "series"
     norm = [normalize_token(t) for t in tokens if t.isalnum() and normalize_token(t) != "series"]
-    return " ".join(sorted(norm))
+    return " ".join(norm)
 
 def pick_tags_pos_based(tokens, user_a_tags):
     """
-    Splits a list of tokens into three tags (A, B, C) with the following logic:
-
-      1) A:Tag – Search the tokens for one that “contains” one of the allowed user A:tags.
-         (That is, for each candidate token, if any allowed tag is a substring of it or vice versa,
-         then force A to be that allowed tag.) If found, remove that token from the token list.
-         If none is found, fall back by removing the last token and using that as A:Tag.
-         (If no tokens exist, default to "general-other".)
-
-      2) B:Tag – With the remaining tokens, perform a POS tag check:
-         • If any token is an adjective (POS starts with "JJ") or a gerund ("VBG"), select the first.
-         • Otherwise, select the first token.
-         Remove the selected token from the list.
-
-      3) C:Tag – Join any remaining tokens (if any) into a string.
+    Given a list of candidate tokens (in original order), assign single tokens for A, B, and C as follows:
+    
+    1. A:Tag  
+       – Scan tokens in order looking for a token that “contains” one of the allowed A:tags 
+         (or vice‐versa).  
+       – If found, remove that token and use the allowed token as A:Tag.
+       – If no token qualifies, set A:Tag = "general-other" (and do not remove any token).
+    
+    2. B:Tag and C:Tag  
+       – If there are exactly two tokens remaining, then:
+           • If the allowed token was found at index 0, swap the order of the two remaining tokens.
+             (This addresses cases like "pella door installation cost" so that B becomes "cost" and C "installation".)
+           • Otherwise, keep the natural order.
+       – If more than two tokens remain, choose B = first token and C = last token.
+       – If fewer than 2 tokens remain, leave B and C as blank.
     """
-    leftover = tokens[:]  # make a copy
-    a_tag = ""
-    found = False
-    # Use "contains" matching for allowed A:tags
-    for token in tokens:
+    a_index = None
+    a_tag = None
+    for i, token in enumerate(tokens):
         for allowed in user_a_tags:
-            # If the allowed tag appears in the token (or vice versa), use the allowed tag.
+            # "Contains" matching (for example, "window" in "windows")
             if allowed in token or token in allowed:
+                a_index = i
                 a_tag = allowed
-                if token in leftover:
-                    leftover.remove(token)
-                found = True
                 break
-        if found:
+        if a_tag is not None:
             break
-    if not found:
-        # Fallback: remove the last token as A:Tag if available; otherwise default.
-        if leftover:
-            a_tag = leftover.pop(-1)
+
+    if a_tag is not None:
+        # Allowed A:Tag found; remove that token.
+        new_tokens = tokens[:a_index] + tokens[a_index+1:]
+    else:
+        a_tag = "general-other"
+        new_tokens = tokens[:]  # leave tokens unchanged
+
+    n = len(new_tokens)
+    if n < 2:
+        b_tag, c_tag = "", ""
+    elif n == 2:
+        # For exactly two tokens, swap order if the allowed token was at index 0
+        if a_index == 0:
+            b_tag, c_tag = new_tokens[1], new_tokens[0]
         else:
-            return ("general-other", "", "")
-    
-    # Now choose B:Tag from the remaining tokens.
-    b_tag = ""
-    if leftover:
-        pos_list = pos_tag(leftover)
-        for (w, p) in pos_list:
-            if p.startswith("JJ") or p == "VBG":
-                b_tag = w
-                if w in leftover:
-                    leftover.remove(w)
-                break
-        if not b_tag and leftover:
-            b_tag = leftover.pop(0)
-    
-    # C:Tag is whatever tokens remain.
-    c_tag = " ".join(leftover) if leftover else ""
-    return (a_tag, b_tag, c_tag)
+            b_tag, c_tag = new_tokens[0], new_tokens[1]
+    else:
+        # For more than 2 tokens, take the first token as B and the last token as C.
+        b_tag, c_tag = new_tokens[0], new_tokens[-1]
+
+    return a_tag, b_tag, c_tag
 
 def classify_keyword_three(keyword, seed, omitted_list, user_a_tags):
     """
-    Processes a keyword string as follows:
-      1) Removes the seed and any omitted phrases.
-      2) Uses KeyBERT to extract the top candidate keyphrase from the remaining text,
-         using an n‑gram range of (1,3) so that multi‐word phrases are possible.
-      3) Normalizes and canonicalizes the candidate, then splits it into tokens.
-      4) Uses pick_tags_pos_based to assign A, B, and C tags.
-         If no candidate is found, returns ("general-other", "", "").
+    Process a keyword string as follows:
+      1) Remove the seed (if provided) and any omitted phrases.
+      2) Use KeyBERT to extract the top candidate keyphrase from the remaining text,
+         using an n-gram range of (1,4) so that up to four words can be returned.
+      3) Normalize and canonicalize the candidate while preserving word order.
+      4) Split the candidate into tokens and use pick_tags_pos_based() to assign A, B, and C tags.
+         If no candidate is found, return ("general-other", "", "").
     """
     text = keyword.lower()
     if seed:
@@ -126,12 +123,13 @@ def classify_keyword_three(keyword, seed, omitted_list, user_a_tags):
         text = re.sub(pat, '', text)
     text = text.strip()
 
-    # Extract candidate keyphrase using multi-word (1,3) extraction.
-    keyphrases = kw_model.extract_keywords(text, keyphrase_ngram_range=(1,3), stop_words='english', top_n=1)
+    # Extract candidate keyphrase (n-gram up to 4 words)
+    keyphrases = kw_model.extract_keywords(text, keyphrase_ngram_range=(1,4), stop_words='english', top_n=1)
     if not keyphrases:
         return ("general-other", "", "")
     candidate = keyphrases[0][0].lower()
     norm_candidate = normalize_phrase(candidate)
+    # Preserve original order (do not sort)
     canon = canonicalize_phrase(norm_candidate)
     if not canon:
         return ("general-other", "", "")
@@ -140,12 +138,12 @@ def classify_keyword_three(keyword, seed, omitted_list, user_a_tags):
 
 def extract_candidate_themes(keywords_list, top_n):
     """
-    Gathers up to top_n candidate keyphrases from each keyword in keywords_list,
-    using an n-gram range of (1,3). (Later the candidate phrase is split into tokens.)
+    Gather up to top_n candidate keyphrases from each keyword in keywords_list,
+    using an n-gram range of (1,4). (Later each candidate phrase is split into tokens.)
     """
     all_phrases = []
     for kw in keywords_list:
-        kps = kw_model.extract_keywords(kw, keyphrase_ngram_range=(1,3), stop_words='english', top_n=top_n)
+        kps = kw_model.extract_keywords(kw, keyphrase_ngram_range=(1,4), stop_words='english', top_n=top_n)
         for kp in kps:
             if kp[0]:
                 all_phrases.append(kp[0].lower())
@@ -153,8 +151,8 @@ def extract_candidate_themes(keywords_list, top_n):
 
 def group_candidate_themes(all_phrases, min_freq):
     """
-    Groups candidate phrases by their canonical form. For each group that meets the frequency
-    threshold (min_freq), selects the most common normalized form as the representative.
+    Group candidate phrases by their canonical form. For each group that meets the frequency
+    threshold (min_freq), select the most common normalized form as the representative.
     Returns a dictionary mapping the representative phrase to its frequency.
     """
     grouped = {}
@@ -184,7 +182,6 @@ def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
     freq_in_col = Counter()
     freq_in_other = Counter()
 
-    # Parse tokens in each col.
     for i, row in df.iterrows():
         bval = row[col_name]
         oval = row[other_col]
@@ -271,7 +268,6 @@ if mode == "Candidate Theme Extraction":
                     norm = normalize_phrase(theme)
                     canon = canonicalize_phrase(norm)
                     tokens = canon.split()
-                    # Use the updated pick_tags_pos_based with contains matching.
                     a, b, c = pick_tags_pos_based(tokens, user_a_tags)
                     splitted.append((a, b, c))
                 cdf["A:Tag"], cdf["B:Tag"], cdf["C:Tag"] = zip(*splitted)
