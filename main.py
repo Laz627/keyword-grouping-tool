@@ -1832,18 +1832,6 @@ elif mode == "Full Tagging":
                 use_openai_embeddings = False
 
         with col2:
-            cluster_method = st.radio(
-                "Clustering method:",
-                ["Tag-based", "Semantic", "Hybrid"],
-                key="tag_cluster_method",
-                help="""
-                Tag-based: Cluster by B and C tags
-                Semantic: Cluster by keyword meaning
-                Hybrid: Combine tags and meaning
-                """
-            )
-
-        with col3:
             # Controls for intent-based clustering - ADJUSTED DEFAULT VALUES
             min_shared_keywords = st.slider(
                 "Min keywords per cluster", 
