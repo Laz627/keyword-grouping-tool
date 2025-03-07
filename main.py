@@ -2019,6 +2019,11 @@ elif mode == "Full Tagging":
                 total_keywords = len(df_filtered)
                 total_clusters = len([k for k, v in cluster_info.items() if not v.get("is_outlier_cluster", False)])
                 total_outliers = len([k for k, v in cluster_info.items() if v.get("is_outlier_cluster", False)])
+                    if "Is_Outlier" in df_filtered.columns:
+                        df_filtered["Is_Outlier"] = df_filtered["Is_Outlier"].fillna(False)
+                        outlier_keywords = df_filtered[df_filtered["Is_Outlier"]].shape[0]
+                    else:
+                        outlier_keywords = 0
                 outlier_keywords = df[df["Is_Outlier"]].shape[0]
                 outlier_percent = (outlier_keywords / total_keywords) * 100 if total_keywords > 0 else 0
                 
