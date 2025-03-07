@@ -2053,7 +2053,7 @@ elif mode == "Content Topic Clustering":
                     # Get models
                     embedding_model, kw_model = get_models()
                     
-                    # First, filter by selected A tags if specified
+                    # Filter by selected A-tags if specified
                     if selected_a_tags:
                         df_filtered = df[df["A:Tag"].isin(selected_a_tags)]
                         if len(df_filtered) == 0:
@@ -2061,6 +2061,19 @@ elif mode == "Content Topic Clustering":
                             st.stop()
                     else:
                         df_filtered = df.copy()
+                    
+                    # Important: Make sure df_filtered is not empty regardless of filtering
+                    if len(df_filtered) == 0:
+                        st.error("No keywords available for processing. Please check your data.")
+                        st.stop()
+                    
+                    # Initialize session state for later use if needed
+                    if 'cluster_insights' not in st.session_state:
+                        st.session_state.cluster_insights = []
+                    if 'cluster_info' not in st.session_state:
+                        st.session_state.cluster_info = {}
+                    if 'cluster_descriptors' not in st.session_state:
+                        st.session_state.cluster_descriptors = {}
                     
                     # Reduce dataframe size by selecting only needed columns
                     df_filtered = df_filtered[["Keywords", "A:Tag", "B:Tag", "C:Tag"]]
