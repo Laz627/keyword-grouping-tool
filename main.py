@@ -1871,6 +1871,14 @@ elif mode == "Full Tagging":
             else:
                 similarity_threshold = 0.65  # Default will be overridden
 
+        # Add clustering method selection
+        clustering_method = st.radio(
+            "Clustering Approach",
+            ["Tag-based", "Semantic", "Hybrid"],
+            key="full_tagging_clustering_approach",
+            help="Select how keywords should be clustered within each A:Tag group"
+        )
+
         # Add embedding diagnostics feature
         with st.expander("🔍 Embedding Diagnostics"):
             if st.button("Analyze Embedding Quality"):
@@ -1963,14 +1971,6 @@ elif mode == "Full Tagging":
             *Note: Actual costs may vary depending on the number of clusters formed*
             """)
 
-        # Add this code before the "Generate Intent-Based Clusters" button
-        clustering_method = st.radio(
-            "Clustering Approach",
-            ["Tag-based", "Semantic", "Hybrid"],
-            key="full_tagging_clustering_approach",
-            help="Select how keywords should be clustered within each A:Tag group"
-        )
-        
         if st.button("Generate Intent-Based Clusters", key="generate_intent_clusters"):
             # Clear memory before processing
             gc.collect()
@@ -2019,12 +2019,14 @@ elif mode == "Full Tagging":
                 total_keywords = len(df_filtered)
                 total_clusters = len([k for k, v in cluster_info.items() if not v.get("is_outlier_cluster", False)])
                 total_outliers = len([k for k, v in cluster_info.items() if v.get("is_outlier_cluster", False)])
-                    if "Is_Outlier" in df_filtered.columns:
-                        df_filtered["Is_Outlier"] = df_filtered["Is_Outlier"].fillna(False)
-                        outlier_keywords = df_filtered[df_filtered["Is_Outlier"]].shape[0]
-                    else:
-                        outlier_keywords = 0
-                outlier_keywords = df[df["Is_Outlier"]].shape[0]
+                
+                # Fixed line - handle Is_Outlier column properly
+                if "Is_Outlier" in df_filtered.columns:
+                    df_filtered["Is_Outlier"] = df_filtered["Is_Outlier"].fillna(False)
+                    outlier_keywords = df_filtered[df_filtered["Is_Outlier"]].shape[0]
+                else:
+                    outlier_keywords = 0
+                    
                 outlier_percent = (outlier_keywords / total_keywords) * 100 if total_keywords > 0 else 0
                 
                 # Show summary statistics
