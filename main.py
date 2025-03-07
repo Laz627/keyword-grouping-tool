@@ -1115,74 +1115,74 @@ elif mode == "Content Topic Clustering":
         )
         
         # Show topic summary and download with unique key
-# After this existing code:
-if topic_df is not None:
-    st.subheader("Content Topic Ideas")
-    st.dataframe(topic_df)
-    
-    csv_topics = topic_df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        "Download Content Topics CSV",
-        csv_topics,
-        "topic_ideas.csv",
-        "text/csv",
-        key="download_topic_ideas"
-    )
-    
-    # ADD THIS NEW SECTION for keyword grouping by topic:
-    st.subheader("Keywords Grouped by Content Topic")
-    
-    # Display keywords grouped by Content Topic
-    for topic_id, topic_name in topic_map.items():
-        cluster_df = df_filtered[df_filtered["Cluster"] == topic_id]
-        keyword_count = len(cluster_df)
-        
-        with st.expander(f"{topic_name} ({keyword_count} keywords)"):
-            # Show keywords in this topic
-            if not cluster_df.empty:
-                # Create a sample for display (limit to 20 for cleaner UI)
-                sample_size = min(20, len(cluster_df))
-                sample_df = cluster_df[["Keywords", "A:Tag", "B:Tag"]].head(sample_size)
-                st.dataframe(sample_df)
-                
-                if len(cluster_df) > sample_size:
-                    st.info(f"Showing {sample_size} of {len(cluster_df)} keywords. Download full mapping below.")
-    
-    # Download options for keyword-topic mapping
-    st.subheader("Export Keyword-Topic Mapping")
-    col1, col2 = st.columns(2)
 
-    with col1:
-        # Option 1: Download the full dataframe with topics assigned
-        csv_with_topics = df_filtered.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "Download Full Dataset with Topics",
-            csv_with_topics,
-            "keywords_with_topics.csv",
-            "text/csv",
-            key="download_full_with_topics"
-        )
-
-    with col2:
-        # Option 2: Download a simplified topic-keyword mapping
-        simple_mapping = []
-        for _, row in df_filtered.iterrows():
-            simple_mapping.append({
-                "Content_Topic": row["Content_Topic"],
-                "Keyword": row["Keywords"],
-                "A:Tag": row["A:Tag"],
-                "B:Tag": row["B:Tag"]
-            })
+    if topic_df is not None:
+        st.subheader("Content Topic Ideas")
+        st.dataframe(topic_df)
         
-        simple_mapping_df = pd.DataFrame(simple_mapping)
-        csv_simple_mapping = simple_mapping_df.to_csv(index=False).encode('utf-8')
+        csv_topics = topic_df.to_csv(index=False).encode('utf-8')
         st.download_button(
-            "Download Topic-Keyword Mapping",
-            csv_simple_mapping,
-            "topic_keyword_map.csv",
+            "Download Content Topics CSV",
+            csv_topics,
+            "topic_ideas.csv",
             "text/csv",
-            key="download_topic_mapping"
+            key="download_topic_ideas"
         )
+        
+        # ADD THIS NEW SECTION for keyword grouping by topic:
+        st.subheader("Keywords Grouped by Content Topic")
+        
+        # Display keywords grouped by Content Topic
+        for topic_id, topic_name in topic_map.items():
+            cluster_df = df_filtered[df_filtered["Cluster"] == topic_id]
+            keyword_count = len(cluster_df)
+            
+            with st.expander(f"{topic_name} ({keyword_count} keywords)"):
+                # Show keywords in this topic
+                if not cluster_df.empty:
+                    # Create a sample for display (limit to 20 for cleaner UI)
+                    sample_size = min(20, len(cluster_df))
+                    sample_df = cluster_df[["Keywords", "A:Tag", "B:Tag"]].head(sample_size)
+                    st.dataframe(sample_df)
+                    
+                    if len(cluster_df) > sample_size:
+                        st.info(f"Showing {sample_size} of {len(cluster_df)} keywords. Download full mapping below.")
+        
+        # Download options for keyword-topic mapping
+        st.subheader("Export Keyword-Topic Mapping")
+        col1, col2 = st.columns(2)
+    
+        with col1:
+            # Option 1: Download the full dataframe with topics assigned
+            csv_with_topics = df_filtered.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                "Download Full Dataset with Topics",
+                csv_with_topics,
+                "keywords_with_topics.csv",
+                "text/csv",
+                key="download_full_with_topics"
+            )
+    
+        with col2:
+            # Option 2: Download a simplified topic-keyword mapping
+            simple_mapping = []
+            for _, row in df_filtered.iterrows():
+                simple_mapping.append({
+                    "Content_Topic": row["Content_Topic"],
+                    "Keyword": row["Keywords"],
+                    "A:Tag": row["A:Tag"],
+                    "B:Tag": row["B:Tag"]
+                })
+            
+            simple_mapping_df = pd.DataFrame(simple_mapping)
+            csv_simple_mapping = simple_mapping_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                "Download Topic-Keyword Mapping",
+                csv_simple_mapping,
+                "topic_keyword_map.csv",
+                "text/csv",
+                key="download_topic_mapping"
+            )
             
             # Provide an overall content strategy if using GPT
             if use_gpt and api_key:
