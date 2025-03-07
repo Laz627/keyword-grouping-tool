@@ -1964,6 +1964,14 @@ elif mode == "Full Tagging":
             *Note: Actual costs may vary depending on the number of clusters formed*
             """)
 
+        # Add this code before the "Generate Intent-Based Clusters" button
+        clustering_approach = st.radio(
+            "Clustering Approach",
+            ["Tag-based", "Semantic", "Hybrid"],
+            key="full_tagging_clustering_approach",
+            help="Select how keywords should be clustered within each A:Tag group"
+        )
+        
         if st.button("Generate Intent-Based Clusters", key="generate_intent_clusters"):
             # Clear memory before processing
             gc.collect()
