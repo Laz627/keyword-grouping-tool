@@ -156,9 +156,9 @@ def get_openai_embeddings(texts, api_key):
     return np.array(all_embeddings)
 
 # Semantic intent-based clustering function
-def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=5, similarity_threshold=0.65):
-    """Improved clustering based on semantic intent with hierarchical approach"""
-    from sklearn.cluster import AgglomerativeClustering
+def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=3, similarity_threshold=0.55):
+    """Improved clustering based on semantic intent with multiple approaches"""
+    from sklearn.cluster import DBSCAN
     import numpy as np
     from scipy.cluster.hierarchy import linkage, fcluster
     
@@ -173,22 +173,35 @@ def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=5, simi
         if norm > 0:
             normalized_embeddings[i] = normalized_embeddings[i] / norm
     
-    # Use hierarchical clustering for more natural grouping
-    # Convert similarity threshold to distance threshold (1 - similarity)
-    distance_threshold = 1 - similarity_threshold
+    # Try DBSCAN first - often works better for semantic embeddings
+    eps = 1 - similarity_threshold  # Convert similarity to distance
+    dbscan = DBSCAN(eps=eps, min_samples=min_shared_keywords, metric='cosine')
+    dbscan_labels = dbscan.fit_predict(normalized_embeddings)
     
-    # Perform hierarchical clustering
-    Z = linkage(normalized_embeddings, method='average', metric='cosine')
-    
-    # Cut the dendrogram to get clusters based on distance threshold
-    cluster_labels = fcluster(Z, t=distance_threshold, criterion='distance') - 1  # -1 to start from 0
+    # Check if DBSCAN gave reasonable results (more than 1 cluster, not all outliers)
+    unique_clusters = np.unique(dbscan_labels)
+    if len(unique_clusters) > 1 and np.sum(dbscan_labels == -1) < len(keywords) * 0.8:
+        cluster_labels = dbscan_labels
+    else:
+        # Fall back to hierarchical clustering with lowered threshold
+        Z = linkage(normalized_embeddings, method='average', metric='cosine')
+        
+        # Try a more lenient threshold if we're getting too few clusters
+        distance_threshold = 1 - similarity_threshold
+        cluster_labels = fcluster(Z, t=distance_threshold, criterion='distance') - 1
+        
+        # If we still have too few clusters, try an even lower threshold
+        if len(np.unique(cluster_labels)) <= 2:
+            relaxed_threshold = similarity_threshold * 0.8  # 20% more lenient
+            distance_threshold = 1 - relaxed_threshold
+            cluster_labels = fcluster(Z, t=distance_threshold, criterion='distance') - 1
     
     # Get cluster sizes
     unique_clusters, cluster_sizes = np.unique(cluster_labels, return_counts=True)
     
     # Mark small clusters as outliers (-1)
     for i, (cluster, size) in enumerate(zip(unique_clusters, cluster_sizes)):
-        if size < min_shared_keywords:
+        if cluster != -1 and size < min_shared_keywords:
             cluster_labels[cluster_labels == cluster] = -1
     
     # Recalculate cluster centers and confidence scores
@@ -1372,9 +1385,9 @@ elif mode == "Full Tagging":
             
             similarity_threshold = st.slider(
                 "Similarity threshold", 
-                min_value=0.4, 
+                min_value=0.3, 
                 max_value=0.95, 
-                value=0.75,  # Higher default from 0.65 to 0.75
+                value=0.55,  # Higher default from 0.65 to 0.75
                 step=0.05,
                 help="How similar keywords must be to cluster together (higher = more similar)"
             )
@@ -1397,7 +1410,7 @@ elif mode == "Full Tagging":
             - Content strategy: ${cost_breakdown['content_strategy']:.4f}
     
             *Note: Actual costs may vary depending on the number of clusters formed*
-            """)
+            """)        
 
         if st.button("Generate Intent-Based Clusters", key="generate_intent_clusters"):
             with st.spinner("Analyzing keyword patterns with semantic intent-based clustering..."):
@@ -1599,9 +1612,9 @@ elif mode == "Content Topic Clustering":
                 
                 similarity_threshold = st.slider(
                     "Similarity threshold", 
-                    min_value=0.4, 
+                    min_value=0.3, 
                     max_value=0.95, 
-                    value=0.75,  # Higher default from 0.65 to 0.75
+                    value=0.55,  # Higher default from 0.65 to 0.75
                     step=0.05,
                     help="How similar keywords must be to cluster together (higher = more similar)"
                 )
