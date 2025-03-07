@@ -1982,6 +1982,7 @@ elif mode == "Full Tagging":
                     use_openai_embeddings=use_openai_embeddings,
                     min_shared_keywords=min_shared_keywords,
                     similarity_threshold=similarity_threshold
+                )
                 
                 # Generate descriptive labels for each cluster
                 use_gpt_descriptors = use_gpt and api_key
