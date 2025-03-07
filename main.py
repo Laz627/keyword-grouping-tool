@@ -1,4 +1,3 @@
-# main.py
 import streamlit as st
 
 # Set page config first
@@ -155,10 +154,30 @@ def get_openai_embeddings(texts, api_key):
     
     return np.array(all_embeddings)
 
-# Semantic intent-based clustering function
-def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=3, similarity_threshold=0.55):
-    """Improved clustering based on semantic intent with multiple approaches"""
-    from sklearn.cluster import DBSCAN
+# New function to get enriched OpenAI embeddings
+def get_enriched_openai_embeddings(texts, tags, api_key):
+    """Enhance embeddings by adding B and C tag context"""
+    enriched_texts = []
+    
+    # Combine keywords with their tags for richer context
+    for i, text in enumerate(texts):
+        b_tag = tags['B'][i] if i < len(tags['B']) else ""
+        c_tag = tags['C'][i] if i < len(tags['C']) else ""
+        
+        if b_tag and c_tag:
+            enriched_texts.append(f"home improvement keyword: {text} related to {b_tag} {c_tag}")
+        elif b_tag:
+            enriched_texts.append(f"home improvement keyword: {text} related to {b_tag}")
+        else:
+            enriched_texts.append(f"home improvement keyword: {text}")
+    
+    # Get embeddings using the enriched texts
+    return get_openai_embeddings(enriched_texts, api_key)
+
+# IMPROVED: Semantic intent-based clustering function
+def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=3, similarity_threshold=0.5):
+    """Improved clustering with adaptive threshold and multi-algorithm approach"""
+    from sklearn.cluster import DBSCAN, KMeans
     import numpy as np
     from scipy.cluster.hierarchy import linkage, fcluster
     
@@ -178,33 +197,58 @@ def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=3, simi
     dbscan = DBSCAN(eps=eps, min_samples=min_shared_keywords, metric='cosine')
     dbscan_labels = dbscan.fit_predict(normalized_embeddings)
     
-    # Check if DBSCAN gave reasonable results (more than 1 cluster, not all outliers)
-    unique_clusters = np.unique(dbscan_labels)
-    if len(unique_clusters) > 1 and np.sum(dbscan_labels == -1) < len(keywords) * 0.8:
-        cluster_labels = dbscan_labels
-    else:
-        # Fall back to hierarchical clustering with lowered threshold
-        Z = linkage(normalized_embeddings, method='average', metric='cosine')
+    # Count clusters (excluding outliers)
+    n_clusters = len(set(dbscan_labels)) - (1 if -1 in dbscan_labels else 0)
+    
+    # If DBSCAN failed to create multiple clusters, try K-means with forced clusters
+    if n_clusters <= 2:
+        # Estimate a reasonable number of clusters - aim for ~15-20 keywords per cluster
+        n_kmeans_clusters = max(3, min(50, len(keywords) // 15))
         
-        # Try a more lenient threshold if we're getting too few clusters
-        distance_threshold = 1 - similarity_threshold
-        cluster_labels = fcluster(Z, t=distance_threshold, criterion='distance') - 1
+        kmeans = KMeans(n_clusters=n_kmeans_clusters, random_state=42, n_init=10)
+        kmeans_labels = kmeans.fit_predict(normalized_embeddings)
         
-        # If we still have too few clusters, try an even lower threshold
-        if len(np.unique(cluster_labels)) <= 2:
-            relaxed_threshold = similarity_threshold * 0.8  # 20% more lenient
+        # Use K-means result if it created multiple clusters
+        if len(set(kmeans_labels)) > 2:
+            cluster_labels = kmeans_labels
+        else:
+            # Last resort: hierarchical clustering with lower threshold
+            Z = linkage(normalized_embeddings, method='average', metric='cosine')
+            
+            # Try a more lenient threshold
+            relaxed_threshold = max(0.3, similarity_threshold * 0.7)  # Don't go below 0.3
             distance_threshold = 1 - relaxed_threshold
             cluster_labels = fcluster(Z, t=distance_threshold, criterion='distance') - 1
+    else:
+        # DBSCAN gave good results, use those
+        cluster_labels = dbscan_labels
     
-    # Get cluster sizes
+    # Split any massive clusters (containing > 30% of all keywords)
     unique_clusters, cluster_sizes = np.unique(cluster_labels, return_counts=True)
+    for cluster, size in zip(unique_clusters, cluster_sizes):
+        if cluster == -1:  # Skip outliers
+            continue
+            
+        if size > len(keywords) * 0.3:  # If cluster has >30% of all keywords
+            # Get indices of this large cluster
+            cluster_indices = np.where(cluster_labels == cluster)[0]
+            
+            # Extract embeddings for this cluster
+            cluster_embeddings = normalized_embeddings[cluster_indices]
+            
+            # Force split into appropriate number of subclusters
+            n_subclusters = max(3, size // 20)  # Aim for ~20 keywords per subcluster
+            
+            # Apply K-means to split
+            sub_kmeans = KMeans(n_clusters=n_subclusters, random_state=42, n_init=10)
+            sub_labels = sub_kmeans.fit_predict(cluster_embeddings)
+            
+            # Generate new cluster IDs - use max existing ID + 1, 2, 3...
+            max_id = np.max(cluster_labels)
+            for i, idx in enumerate(cluster_indices):
+                cluster_labels[idx] = max_id + 1 + sub_labels[i]
     
-    # Mark small clusters as outliers (-1)
-    for i, (cluster, size) in enumerate(zip(unique_clusters, cluster_sizes)):
-        if cluster != -1 and size < min_shared_keywords:
-            cluster_labels[cluster_labels == cluster] = -1
-    
-    # Recalculate cluster centers and confidence scores
+    # Calculate confidence scores
     unique_clusters = np.unique(cluster_labels)
     cluster_centers = {}
     
@@ -215,20 +259,18 @@ def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=3, simi
         cluster_indices = np.where(cluster_labels == cluster)[0]
         cluster_centers[cluster] = np.mean(normalized_embeddings[cluster_indices], axis=0)
     
-    # Calculate meaningful confidence scores
+    # Calculate confidence scores
     confidence_scores = np.full(len(keywords), 0.3)  # Base confidence for outliers
     
     for i, label in enumerate(cluster_labels):
         if label == -1:
-            continue  # Keep outlier confidence at 0.3
+            continue
         
-        # Calculate cosine similarity to cluster center
         center = cluster_centers[label]
         embedding = normalized_embeddings[i]
         
         # Cosine similarity
         similarity = np.dot(center, embedding)
-        # Scale similarity to 0.5-1.0 range for better differentiation
         confidence_scores[i] = 0.5 + (similarity * 0.5)
     
     return cluster_labels, confidence_scores
@@ -424,7 +466,7 @@ def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
 
 # Enhanced semantic intent-based clustering
 def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, api_key=None,
-                        use_openai_embeddings=False, min_shared_keywords=5, similarity_threshold=0.65):
+                        use_openai_embeddings=False, min_shared_keywords=3, similarity_threshold=0.5):
     """
     Perform two-stage clustering with semantic intent-based approach:
     1. Group by A tag
@@ -505,7 +547,7 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
                     
                 # Apply clustering if we have features
                 if "Subcluster" not in group_df.columns and features.shape[1] > 0:
-                    # Apply semantic intent-based clustering
+                    # Apply semantic intent-based clustering with improved function
                     cluster_labels, confidence_scores = semantic_intent_clustering(
                         group_df["Keywords"].tolist(), 
                         features.values, 
@@ -529,13 +571,21 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
                 else:
                     # Generate embeddings based on selected method
                     if use_openai_embeddings and api_key:
-                        # Use OpenAI embeddings
-                        embeddings = get_openai_embeddings(keywords, api_key)
+                        # Use enriched OpenAI embeddings for better results
+                        b_tags = group_df["B:Tag"].fillna("").tolist()
+                        c_tags = group_df["C:Tag"].fillna("").tolist()
+                        
+                        # Get enriched embeddings that include tag context
+                        embeddings = get_enriched_openai_embeddings(
+                            keywords, 
+                            {'B': b_tags, 'C': c_tags}, 
+                            api_key
+                        )
                     else:
                         # Use SentenceTransformer embeddings
                         embeddings = embedding_model.encode(keywords)
                     
-                    # Apply semantic intent-based clustering
+                    # Apply improved semantic intent-based clustering
                     cluster_labels, confidence_scores = semantic_intent_clustering(
                         keywords, 
                         embeddings,
@@ -560,13 +610,13 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
                 else:
                     # Generate embeddings based on selected method
                     if use_openai_embeddings and api_key:
-                        # Use OpenAI embeddings
+                        # Use enriched OpenAI embeddings
                         embeddings = get_openai_embeddings(combined_texts, api_key)
                     else:
                         # Use SentenceTransformer embeddings
                         embeddings = embedding_model.encode(combined_texts)
                     
-                    # Apply semantic intent-based clustering
+                    # Apply improved semantic intent-based clustering
                     cluster_labels, confidence_scores = semantic_intent_clustering(
                         combined_texts, 
                         embeddings,
@@ -1374,23 +1424,82 @@ elif mode == "Full Tagging":
             )
 
         with col3:
-            # Controls for intent-based clustering
+            # Controls for intent-based clustering - ADJUSTED DEFAULT VALUES
             min_shared_keywords = st.slider(
                 "Min keywords per cluster", 
                 min_value=2, 
                 max_value=15, 
-                value=3,  # Lower default from 5 to 3
+                value=3,  # Lowered from 5 to 3
                 help="Minimum number of keywords required to form a cluster"
             )
             
             similarity_threshold = st.slider(
                 "Similarity threshold", 
-                min_value=0.3, 
+                min_value=0.3,  # Lower minimum value
                 max_value=0.95, 
-                value=0.55,  # Higher default from 0.65 to 0.75
+                value=0.5,  # Lowered from 0.65 to 0.5
                 step=0.05,
                 help="How similar keywords must be to cluster together (higher = more similar)"
             )
+
+        # Add embedding diagnostics feature
+        with st.expander("🔍 Embedding Diagnostics"):
+            if st.button("Analyze Embedding Quality"):
+                with st.spinner("Analyzing embeddings..."):
+                    if use_openai_embeddings and api_key:
+                        # Sample keywords for analysis (limit to 200 for performance)
+                        sample_kws = df["Keywords"].tolist()[:200]
+                        
+                        # Get embeddings
+                        sample_emb = get_openai_embeddings(sample_kws, api_key)
+                        
+                        # Normalize embeddings
+                        normalized_emb = sample_emb.copy()
+                        for i in range(len(normalized_emb)):
+                            norm = np.linalg.norm(normalized_emb[i])
+                            if norm > 0:
+                                normalized_emb[i] = normalized_emb[i] / norm
+                        
+                        # Calculate similarity matrix
+                        sim_matrix = cosine_similarity(normalized_emb)
+                        
+                        # Get similarity statistics
+                        flat_sim = sim_matrix[np.triu_indices(len(sim_matrix), k=1)]
+                        
+                        # Display statistics
+                        st.write(f"**Similarity Statistics (sample of {len(sample_kws)} keywords):**")
+                        st.write(f"Min: {flat_sim.min():.4f}, Max: {flat_sim.max():.4f}")
+                        st.write(f"Mean: {flat_sim.mean():.4f}, Median: {np.median(flat_sim):.4f}")
+                        
+                        # Create histogram
+                        fig, ax = plt.subplots(figsize=(10, 6))
+                        ax.hist(flat_sim, bins=50)
+                        ax.set_title("Embedding Similarity Distribution")
+                        ax.set_xlabel("Cosine Similarity")
+                        ax.set_ylabel("Count")
+                        ax.axvline(x=similarity_threshold, color='r', linestyle='--', label=f"Current threshold ({similarity_threshold})")
+                        ax.legend()
+                        st.pyplot(fig)
+                        
+                        # Suggest threshold based on distribution
+                        p75 = np.percentile(flat_sim, 75)
+                        p50 = np.percentile(flat_sim, 50)
+                        
+                        # Dynamic recommendation based on distribution
+                        if flat_sim.mean() > 0.7:  # Very similar embeddings
+                            suggested = p50 # Use median for high-similarity sets
+                        else:
+                            suggested = p75 # Otherwise use 75th percentile
+                            
+                        st.info(f"""
+                        **Threshold Recommendations:**
+                        - Current setting: {similarity_threshold}
+                        - Conservative (fewer, larger clusters): {p75:.2f}
+                        - Balanced: {suggested:.2f} ✓ RECOMMENDED
+                        - Aggressive (more, smaller clusters): {p50:.2f}
+                        """)
+                    else:
+                        st.error("OpenAI API key required for embedding diagnostics")
 
         # Display cost information for OpenAI embeddings
         if use_openai_embeddings:
@@ -1410,14 +1519,14 @@ elif mode == "Full Tagging":
             - Content strategy: ${cost_breakdown['content_strategy']:.4f}
     
             *Note: Actual costs may vary depending on the number of clusters formed*
-            """)        
+            """)
 
         if st.button("Generate Intent-Based Clusters", key="generate_intent_clusters"):
             with st.spinner("Analyzing keyword patterns with semantic intent-based clustering..."):
                 # Get models
                 embedding_model, _ = get_models()
                 
-                # Use the enhanced semantic intent-based clustering
+                # Use the enhanced two-stage clustering with improved parameter values
                 df_clustered, cluster_info = two_stage_clustering(
                     df, 
                     cluster_method=cluster_method,
@@ -1601,20 +1710,20 @@ elif mode == "Content Topic Clustering":
                 )
             
             with col2:
-                # Intent-based clustering parameters
+                # Intent-based clustering parameters - ADJUSTED VALUES
                 min_shared_keywords = st.slider(
                     "Min keywords per cluster", 
                     min_value=2, 
                     max_value=15, 
-                    value=3,  # Lower default from 5 to 3
+                    value=3,  # Lowered from 5 to 3
                     help="Minimum number of keywords required to form a cluster"
                 )
                 
                 similarity_threshold = st.slider(
                     "Similarity threshold", 
-                    min_value=0.3, 
+                    min_value=0.3,  # Lower minimum
                     max_value=0.95, 
-                    value=0.55,  # Higher default from 0.65 to 0.75
+                    value=0.5,  # Lowered from 0.65 to 0.5
                     step=0.05,
                     help="How similar keywords must be to cluster together (higher = more similar)"
                 )
@@ -1637,6 +1746,69 @@ elif mode == "Content Topic Clustering":
                                                   help="Generate more creative topic ideas with GPT", key="use_gpt_topics")
                     if use_gpt_for_topics and not api_key:
                         st.warning("API key required for GPT topic generation")
+
+            # Add embedding diagnostics feature
+            with st.expander("🔍 Embedding Diagnostics"):
+                if st.button("Analyze Embedding Quality"):
+                    with st.spinner("Analyzing embeddings..."):
+                        if use_openai_embeddings and api_key:
+                            # Sample keywords for analysis (limit for performance)
+                            filtered_df = df
+                            if selected_a_tags:
+                                filtered_df = df[df["A:Tag"].isin(selected_a_tags)]
+                            
+                            sample_kws = filtered_df["Keywords"].tolist()[:200]
+                            
+                            # Get embeddings
+                            sample_emb = get_openai_embeddings(sample_kws, api_key)
+                            
+                            # Normalize embeddings
+                            normalized_emb = sample_emb.copy()
+                            for i in range(len(normalized_emb)):
+                                norm = np.linalg.norm(normalized_emb[i])
+                                if norm > 0:
+                                    normalized_emb[i] = normalized_emb[i] / norm
+                            
+                            # Calculate similarity matrix
+                            sim_matrix = cosine_similarity(normalized_emb)
+                            
+                            # Get similarity statistics
+                            flat_sim = sim_matrix[np.triu_indices(len(sim_matrix), k=1)]
+                            
+                            # Display statistics
+                            st.write(f"**Similarity Statistics (sample of {len(sample_kws)} keywords):**")
+                            st.write(f"Min: {flat_sim.min():.4f}, Max: {flat_sim.max():.4f}")
+                            st.write(f"Mean: {flat_sim.mean():.4f}, Median: {np.median(flat_sim):.4f}")
+                            
+                            # Create histogram
+                            fig, ax = plt.subplots(figsize=(10, 6))
+                            ax.hist(flat_sim, bins=50)
+                            ax.set_title("Embedding Similarity Distribution")
+                            ax.set_xlabel("Cosine Similarity")
+                            ax.set_ylabel("Count")
+                            ax.axvline(x=similarity_threshold, color='r', linestyle='--', label=f"Current threshold ({similarity_threshold})")
+                            ax.legend()
+                            st.pyplot(fig)
+                            
+                            # Suggest threshold based on distribution
+                            p75 = np.percentile(flat_sim, 75)
+                            p50 = np.percentile(flat_sim, 50)
+                            
+                            # Dynamic recommendation based on distribution
+                            if flat_sim.mean() > 0.7:  # Very similar embeddings
+                                suggested = p50 # Use median for high-similarity sets
+                            else:
+                                suggested = p75 # Otherwise use 75th percentile
+                                
+                            st.info(f"""
+                            **Threshold Recommendations:**
+                            - Current setting: {similarity_threshold}
+                            - Conservative (fewer, larger clusters): {p75:.2f}
+                            - Balanced: {suggested:.2f} ✓ RECOMMENDED
+                            - Aggressive (more, smaller clusters): {p50:.2f}
+                            """)
+                        else:
+                            st.error("OpenAI API key required for embedding diagnostics")
             
             # Display cost information for OpenAI embeddings
             if use_openai_embeddings:
