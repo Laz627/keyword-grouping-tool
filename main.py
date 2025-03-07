@@ -1823,7 +1823,7 @@ elif mode == "Content Topic Clustering":
                     st.session_state.topic_map = topic_map
                     st.session_state.cluster_info = cluster_info  # Store cluster info for visualization
                     st.session_state.cluster_descriptors = cluster_descriptors  # Store cluster descriptors
-                    st.session_state.topic_confidence_threshold = topic_confidence_threshold  # Store confidence threshold
+                    st.session_state['stored_topic_conf_threshold'] = topic_confidence_threshold # Store confidence threshold
     
     # Display results from session state if already processed
     if 'content_topics_processed' in st.session_state and st.session_state.content_topics_processed:
@@ -1832,7 +1832,7 @@ elif mode == "Content Topic Clustering":
         topic_df = st.session_state.topic_df
         
         # Get confidence threshold from session state
-        topic_confidence_threshold = st.session_state.topic_confidence_threshold if 'topic_confidence_threshold' in st.session_state else 0.6
+        topic_confidence_threshold = st.session_state.get('stored_topic_conf_threshold', st.session_state.get('topic_confidence_threshold', 0.6))
         
         # Define topic_map from session state or recreate it if needed
         if 'topic_map' in st.session_state:
