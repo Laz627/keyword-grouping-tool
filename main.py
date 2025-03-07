@@ -1,6 +1,9 @@
+# main.py - Complete Streamlit application
+
+# 1. First import streamlit (no other imports before this)
 import streamlit as st
 
-# Set page config first - must be the very first Streamlit command
+# 2. Set page config as the FIRST Streamlit command
 st.set_page_config(
     page_title="Keyword Tagging & Topic Generation Tool",
     page_icon="🔍",
@@ -8,13 +11,107 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Import the app function AFTER setting page config
-# No other imports should be here to avoid conflicts
-from app_logic import run_app
+# 3. Now import all other libraries
+import pandas as pd
+import re
+from collections import Counter
+import numpy as np
+import json
+import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+from keybert import KeyBERT
+from sentence_transformers import SentenceTransformer
+from sklearn.cluster import KMeans
+import nltk
+from nltk import word_tokenize, pos_tag
+from nltk.stem import WordNetLemmatizer
+import openai
 
-# Call the app function
-if __name__ == "__main__":
-    run_app()
+# 4. Download NLTK resources and initialize other non-streamlit objects
+nltk.download('punkt', quiet=True)
+nltk.download('averaged_perceptron_tagger', quiet=True)
+nltk.download('wordnet', quiet=True)
+nltk.download('stopwords', quiet=True)
+from nltk.corpus import stopwords
+stop_words = set(stopwords.words('english'))
+
+lemmatizer = WordNetLemmatizer()
+
+# 5. Initialize models (after page config is already set)
+@st.cache_resource
+def load_embedding_model():
+    return SentenceTransformer('all-MiniLM-L6-v2')
+
+embedding_model = load_embedding_model()
+kw_model = KeyBERT(model=embedding_model)
+
+###
+### 6. All helper functions
+###
+
+def normalize_token(token):
+    """Convert token to lowercase and lemmatize (noun mode); also converts 'vs' to 'v'."""
+    token = token.lower()
+    if token == "vs":
+        token = "v"
+    return lemmatizer.lemmatize(token, pos='n')
+
+def normalize_phrase(phrase):
+    """
+    Lowercase, tokenize, keep only alphanumeric tokens, and lemmatize.
+    E.g., 'Pella Windows Cost' becomes 'pella window cost'.
+    """
+    tokens = word_tokenize(phrase.lower())
+    return " ".join(normalize_token(t) for t in tokens if t.isalnum())
+
+# [ADD ALL OTHER HELPER FUNCTIONS HERE]
+
+###
+### 7. Main application UI code
+###
+
+# Sidebar with application description and mode selection
+with st.sidebar:
+    st.title("Keyword Analysis Tool")
+    st.markdown("""
+    This tool helps you analyze, tag, and generate content topics from keywords:
+    
+    1. **Extract Themes** - Find common patterns in your keywords
+    2. **Tag Keywords** - Categorize keywords with A, B, C tags
+    3. **Generate Topics** - Create content topics from tagged keywords
+    """)
+    
+    # Add OpenAI API key input for GPT-powered features
+    st.subheader("OpenAI API Settings")
+    api_key = st.text_input("OpenAI API Key (for topic generation)", type="password")
+    use_gpt = st.checkbox("Use GPT-4o-mini for enhanced analysis", value=True)
+    
+    if use_gpt and not api_key:
+        st.warning("⚠️ API key required for GPT features")
+    
+    # Mode selection
+    st.subheader("Select Mode")
+    mode = st.radio(
+        "Choose a mode:",
+        ["Candidate Theme Extraction", "Full Tagging", "Content Topic Clustering"],
+        help="Select what you want to do with your keywords"
+    )
+
+# Main content area - customize based on selected mode
+if mode == "Candidate Theme Extraction":
+    st.title("🔍 Extract Keyword Themes")
+    
+    # [CANDIDATE THEME EXTRACTION CODE HERE]
+    
+elif mode == "Full Tagging":
+    st.title("🏷️ Tag Your Keywords")
+    
+    # [FULL TAGGING CODE HERE]
+    
+elif mode == "Content Topic Clustering":
+    st.title("📚 Generate Content Topics")
+    
+    # [CONTENT TOPIC CLUSTERING CODE HERE]
 
 ###
 ### Helper Functions for Tagging
