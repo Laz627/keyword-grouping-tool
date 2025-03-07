@@ -1,4 +1,14 @@
 import streamlit as st
+
+# Set page configuration as the FIRST Streamlit command
+st.set_page_config(
+    page_title="Keyword Tagging & Topic Generation Tool",
+    page_icon="🔍",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Now the rest of your imports
 import pandas as pd
 import re
 from collections import Counter
