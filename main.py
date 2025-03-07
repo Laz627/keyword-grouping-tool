@@ -861,34 +861,33 @@ elif mode == "Full Tagging":
                     except Exception as e:
                         st.error(f"Error generating analysis: {e}")
 
-    # Add the new AI clustering section
     st.subheader("🧩 AI-Powered Tag Clustering")
     st.markdown("""
     Discover how your keywords naturally cluster beyond the assigned tags. 
     This can reveal additional patterns and relationships in your keyword set.
     """)
     
+    # Create cluster options
+    clustering_col1, clustering_col2 = st.columns(2)
+    
+    with clustering_col1:
+        num_clusters = st.slider("Number of clusters", 
+                               min_value=2, 
+                               max_value=10, 
+                               value=min(5, len(df) // 20),
+                               key="tag_num_clusters")
+    
+    with clustering_col2:
+        cluster_method = st.radio(
+            "Clustering method:",
+            ["Tag-based", "Semantic", "Hybrid"],
+            key="tag_cluster_method"
+        )
+    
     if st.button("Generate Tag Clusters", key="generate_tag_clusters"):
         with st.spinner("Analyzing keyword patterns..."):
             # Get models
             embedding_model, _ = get_models()
-            
-            # Create cluster options
-            clustering_col1, clustering_col2 = st.columns(2)
-            
-            with clustering_col1:
-                num_clusters = st.slider("Number of clusters", 
-                                       min_value=2, 
-                                       max_value=10, 
-                                       value=min(5, len(df) // 20),
-                                       key="tag_num_clusters")
-            
-            with clustering_col2:
-                cluster_method = st.radio(
-                    "Clustering method:",
-                    ["Tag-based", "Semantic", "Hybrid"],
-                    key="tag_cluster_method"
-                )
             
             # Process based on selected method
             if cluster_method == "Tag-based":
@@ -1001,21 +1000,24 @@ elif mode == "Full Tagging":
                                     f"Cluster {cluster_id}: {', '.join(top_a_tags)} - {', '.join(top_b_tags)}\nSample keywords: {', '.join(sample_kws)}"
                                 )
                             
+                            # Pre-format the cluster summaries to avoid backslash issues in f-strings
+                            cluster_text = "\n\n".join(cluster_summaries)
+                            
+                            prompt = f"""You're analyzing keyword clusters for a content strategist.
+
+CLUSTERS:
+{cluster_text}
+
+Please provide:
+1. A brief analysis of how these clusters differ from each other
+2. What these clusters suggest about audience interests and intent
+3. How the tag assignments could be improved based on these clusters
+
+Keep your analysis concise and actionable."""
+                            
                             response = openai.chat.completions.create(
                                 model="gpt-4o-mini",
-                                messages=[{"role": "user", "content": f"""
-                                You're analyzing keyword clusters for a content strategist.
-                                
-                                CLUSTERS:
-                                {'\n\n'.join(cluster_summaries)}
-                                
-                                Please provide:
-                                1. A brief analysis of how these clusters differ from each other
-                                2. What these clusters suggest about audience interests and intent
-                                3. How the tag assignments could be improved based on these clusters
-                                
-                                Keep your analysis concise and actionable.
-                                """}],
+                                messages=[{"role": "user", "content": prompt}],
                                 temperature=0.5
                             )
                             
