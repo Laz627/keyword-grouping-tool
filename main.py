@@ -62,6 +62,13 @@ def get_models():
     return st.session_state.embedding_model, st.session_state.kw_model
 
 # Helper Functions for Tagging
+def normalize_token(token):
+    """Convert token to lowercase and lemmatize (noun mode); also converts 'vs' to 'v'."""
+    token = token.lower()
+    if token == "vs":
+        token = "v"
+    return lemmatizer.lemmatize(token, pos='n')
+
 def normalize_phrase(phrase):
     """
     Lowercase, tokenize, keep only alphanumeric tokens, and lemmatize.
