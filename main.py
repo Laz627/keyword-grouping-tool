@@ -1816,6 +1816,17 @@ elif mode == "Full Tagging":
         - Keywords that don't share enough common meaning are placed in "Miscellaneous" groups
         """)
 
+        # Add A-tag selection filter
+        st.subheader("A-Tag Selection")
+        # Get unique A-tags from the dataframe
+        a_tags = sorted(df["A:Tag"].unique().tolist())
+        selected_a_tags = st.multiselect(
+            "Select A-Tags to analyze (leave empty for all)",
+            options=a_tags,
+            default=[a_tags[0]] if len(a_tags) > 0 else [],
+            help="Select specific A-Tags to prevent pooling across categories"
+        )
+        
         # Create clustering options
         col1, col2, col3 = st.columns(3)
 
@@ -1830,7 +1841,7 @@ elif mode == "Full Tagging":
             if use_openai_embeddings and not api_key:
                 st.warning("API key required for OpenAI embeddings")
                 use_openai_embeddings = False
-
+        
         with col2:
             # Controls for intent-based clustering - ADJUSTED DEFAULT VALUES
             min_shared_keywords = st.slider(
@@ -1968,12 +1979,20 @@ elif mode == "Full Tagging":
                 # Get models
                 embedding_model, _ = get_models()
                 
+                # Filter by selected A-tags if any were chosen
+                if selected_a_tags:
+                    df_filtered = df[df["A:Tag"].isin(selected_a_tags)].copy()
+                    if len(df_filtered) == 0:
+                        st.error("No keywords found with the selected A-tags.")
+                        st.stop()
+                else:
+                    df_filtered = df.copy()
+                
                 # Use the enhanced two-stage clustering with improved parameter values
                 st.text("Processing clusters... this might take a few minutes for large datasets")
-                df_filtered = df.copy()
                 df_clustered, cluster_info = two_stage_clustering(
                     df_filtered, 
-                    cluster_method=clustering_approach,
+                    cluster_method=cluster_method,  # Use your existing variable
                     embedding_model=embedding_model,
                     api_key=api_key,
                     use_openai_embeddings=use_openai_embeddings,
