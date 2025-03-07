@@ -2043,11 +2043,10 @@ elif mode == "Full Tagging":
                 fig = create_two_stage_visualization(df_clustered, cluster_info, cluster_descriptors)
                 st.pyplot(fig)
                 
-                # Show clusters with their properties
                 st.markdown("### Intent-Based Clusters by A:Tag")
                 
                 # Group clusters by A tag for organized display
-                a_tags = sorted(df["A_Group"].unique())
+                a_tags = sorted(df["A:Tag"].unique())  # Changed from A_Group to A:Tag
                 
                 for a_tag in a_tags:
                     with st.expander(f"A:Tag: {a_tag}"):
