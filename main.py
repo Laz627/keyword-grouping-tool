@@ -24,6 +24,9 @@ from sentence_transformers import SentenceTransformer
 from sklearn.cluster import DBSCAN, KMeans
 from sklearn.metrics.pairwise import cosine_similarity
 from tenacity import retry, stop_after_attempt, wait_exponential
+import gc
+import signal
+from contextlib import contextmanager
 
 # Try to import docx for Word document export
 try:
@@ -50,6 +53,23 @@ if 'full_tagging_processed' not in st.session_state:
     st.session_state.full_tagging_processed = False
 if 'content_topics_processed' not in st.session_state:
     st.session_state.content_topics_processed = False
+
+# Timeout context manager to prevent hanging
+@contextmanager
+def timeout(seconds):
+    def handler(signum, frame):
+        raise TimeoutError(f"Operation timed out after {seconds} seconds")
+    
+    # Save the original handler
+    try:
+        original_handler = signal.getsignal(signal.SIGALRM)
+        signal.signal(signal.SIGALRM, handler)
+        signal.alarm(seconds)
+        yield
+    finally:
+        signal.alarm(0)
+        if 'original_handler' in locals():
+            signal.signal(signal.SIGALRM, original_handler)
 
 # Load models on demand using session state
 def get_models():
@@ -129,7 +149,12 @@ def get_models():
     
     return st.session_state.embedding_model, st.session_state.kw_model
 
-# Get OpenAI embeddings function - UPDATED to use text-embedding-3-small
+# Get OpenAI embeddings function - UPDATED with caching to prevent recalculation
+@st.cache_data(ttl=3600)
+def get_cached_embeddings(texts, api_key, model="text-embedding-3-small"):
+    """Cached version of embeddings to prevent recalculation"""
+    return get_openai_embeddings(texts, api_key, model)
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
 def get_openai_embeddings(texts, api_key, model="text-embedding-3-small"):
     """Get embeddings from OpenAI with improved model"""
@@ -153,6 +178,12 @@ def get_openai_embeddings(texts, api_key, model="text-embedding-3-small"):
         progress_bar.empty()
     
     return np.array(all_embeddings)
+
+# Cached enriched embeddings
+@st.cache_data(ttl=3600)
+def get_cached_enriched_embeddings(texts, tags, api_key, model="text-embedding-3-small"):
+    """Cached version of enriched embeddings to prevent recalculation"""
+    return get_enriched_openai_embeddings(texts, tags, api_key, model)
 
 # Updated function to get enriched OpenAI embeddings
 def get_enriched_openai_embeddings(texts, tags, api_key, model="text-embedding-3-small"):
@@ -644,7 +675,7 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
                         c_tags = group_df["C:Tag"].fillna("").tolist()
                         
                         # Get enriched embeddings that include tag context
-                        embeddings = get_enriched_openai_embeddings(
+                        embeddings = get_cached_enriched_embeddings(
                             keywords, 
                             {'A': a_tags, 'B': b_tags, 'C': c_tags}, 
                             api_key
@@ -680,7 +711,7 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
                     if use_openai_embeddings and api_key:
                         # Use enriched OpenAI embeddings
                         a_tags = group_df["A:Tag"].fillna("").tolist()
-                        embeddings = get_enriched_openai_embeddings(
+                        embeddings = get_cached_enriched_embeddings(
                             combined_texts, 
                             {'A': a_tags}, 
                             api_key
@@ -766,6 +797,118 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
     
     return clustered_df, cluster_info
 
+# NEW: Batch processing for cluster descriptors to improve performance
+def batch_generate_cluster_descriptors(cluster_info, api_key, max_clusters_per_batch=5):
+    """Generate descriptive labels for clusters in batches for better performance"""
+    openai.api_key = api_key
+    all_descriptors = {}
+    cluster_batches = []
+    
+    # Create batches of clusters
+    batch = []
+    total_keywords = 0
+    
+    # First sort clusters by size (largest first)
+    sorted_clusters = sorted(
+        [(k, v) for k, v in cluster_info.items()], 
+        key=lambda x: x[1]["size"], 
+        reverse=True
+    )
+    
+    for cluster_id, info in sorted_clusters:
+        # Skip if this would make batch too large
+        if len(batch) >= max_clusters_per_batch or total_keywords > 50:
+            if batch:
+                cluster_batches.append(batch)
+            batch = []
+            total_keywords = 0
+            
+        # Add to current batch
+        sample_kws = info["keywords"][:min(10, len(info["keywords"]))]
+        is_outlier = info.get("is_outlier_cluster", False)
+        
+        # Skip batching for outliers - handle them separately
+        if is_outlier:
+            all_descriptors[cluster_id] = f"{info['a_tag'].title()}-Miscellaneous"
+            continue
+            
+        batch.append({
+            "id": cluster_id,
+            "a_tag": info["a_tag"],
+            "b_tags": info["b_tags"][:3] if info["b_tags"] else [],
+            "keywords": sample_kws
+        })
+        total_keywords += len(sample_kws)
+    
+    # Add final batch if not empty
+    if batch:
+        cluster_batches.append(batch)
+    
+    # Process each batch
+    for i, batch in enumerate(cluster_batches):
+        prompt = "Generate brief, specific 2-4 word descriptors for each keyword cluster:\n\n"
+        
+        # Add each cluster to the prompt
+        for cluster in batch:
+            prompt += f"CLUSTER {cluster['id']}:\n"
+            prompt += f"Category: {cluster['a_tag']}\n"
+            prompt += f"Attributes: {', '.join(cluster['b_tags'])}\n"
+            prompt += f"Keywords: {', '.join(cluster['keywords'])}\n\n"
+        
+        prompt += """For each cluster, provide ONLY a short 2-4 word descriptor that captures its essence.
+        Format your response as JSON:
+        {
+          "descriptors": [
+            {"cluster_id": 1, "descriptor": "Vinyl Window Installation"},
+            {"cluster_id": 2, "descriptor": "Door Hardware Options"}
+          ]
+        }
+        
+        Keep each descriptor specific, concise (2-4 words), and clear.
+        """
+        
+        try:
+            response = openai.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.4,
+                response_format={"type": "json_object"},
+                max_tokens=1000
+            )
+            
+            # Parse results
+            try:
+                result_json = json.loads(response.choices[0].message.content)
+                for item in result_json.get("descriptors", []):
+                    cluster_id = item.get("cluster_id")
+                    descriptor = item.get("descriptor", "")
+                    
+                    if cluster_id is not None and descriptor:
+                        # Validate descriptor isn't too long
+                        if len(descriptor.split()) <= 5:
+                            all_descriptors[cluster_id] = descriptor
+                        else:
+                            # Fall back to basic descriptor
+                            info = cluster_info[cluster_id]
+                            all_descriptors[cluster_id] = f"{info['a_tag'].title()}-{info['b_tags'][0].title() if info['b_tags'] else 'General'}"
+            except:
+                # If JSON parsing fails, use basic descriptors for this batch
+                for cluster in batch:
+                    cluster_id = cluster["id"]
+                    a_tag = cluster["a_tag"]
+                    b_tags = cluster["b_tags"]
+                    all_descriptors[cluster_id] = f"{a_tag.title()}-{b_tags[0].title() if b_tags else 'General'}"
+        except Exception as e:
+            # If API call fails, use basic descriptors
+            for cluster in batch:
+                cluster_id = cluster["id"]
+                a_tag = cluster["a_tag"]
+                b_tags = cluster["b_tags"]
+                all_descriptors[cluster_id] = f"{a_tag.title()}-{b_tags[0].title() if b_tags else 'General'}"
+    
+    # Return the descriptors for all clusters
+    return all_descriptors
+
 # Enhanced function to generate descriptive cluster labels
 def generate_cluster_descriptors(cluster_info, use_gpt=False, api_key=None):
     """
@@ -785,6 +928,10 @@ def generate_cluster_descriptors(cluster_info, use_gpt=False, api_key=None):
     descriptor_map : dict
         Dictionary mapping cluster IDs to descriptive labels
     """
+    # For large datasets, use the batched version
+    if use_gpt and api_key and len(cluster_info) > 10:
+        return batch_generate_cluster_descriptors(cluster_info, api_key)
+    
     descriptor_map = {}
     
     for cluster_id, info in cluster_info.items():
@@ -943,103 +1090,184 @@ def create_two_stage_visualization(df_clustered, cluster_info, cluster_descripto
     
     return fig
 
-# NEW: Function to generate cluster-specific topic based on keywords
-def generate_topic_for_cluster(cluster_id, info, keywords, high_confidence_keywords, a_tag, b_tags, kw_model, use_gpt=False, api_key=None):
-    """
-    Generate a topic specifically aligned with the keywords in a cluster
+# NEW: Batch process GPT topic generation function
+def batch_generate_topics(cluster_info, api_key, max_clusters_per_batch=5):
+    """Process multiple clusters in a single API call to improve performance"""
+    openai.api_key = api_key
+    all_results = {}
+    cluster_batches = []
     
-    Parameters:
-    -----------
-    cluster_id : int
-        Unique identifier for the cluster
-    info : dict
-        Cluster information dictionary
-    keywords : list
-        List of all keywords in the cluster
-    high_confidence_keywords : list
-        List of high confidence keywords in the cluster
-    a_tag : str
-        Primary category tag
-    b_tags : list
-        Secondary attribute tags
-    kw_model : KeyBERT model
-        Model for extracting key phrases
-    use_gpt : bool
-        Whether to use GPT for topic generation
-    api_key : str
-        OpenAI API key
+    # Create batches of clusters
+    batch = []
+    total_keywords = 0
+    
+    # First sort clusters by size (largest first)
+    sorted_clusters = sorted(
+        [(k, v) for k, v in cluster_info.items()], 
+        key=lambda x: x[1]["size"], 
+        reverse=True
+    )
+    
+    for cluster_id, info in sorted_clusters:
+        # Skip if this would make batch too large
+        if len(batch) >= max_clusters_per_batch or total_keywords > 100:
+            if batch:
+                cluster_batches.append(batch)
+            batch = []
+            total_keywords = 0
+            
+        # Add to current batch
+        sample_kws = info["keywords"][:min(15, len(info["keywords"]))]
+        batch.append({
+            "id": cluster_id,
+            "a_tag": info["a_tag"],
+            "b_tags": info["b_tags"][:3] if info["b_tags"] else [],
+            "keywords": sample_kws,
+            "is_outlier": info.get("is_outlier_cluster", False)
+        })
+        total_keywords += len(sample_kws)
+    
+    # Add final batch if not empty
+    if batch:
+        cluster_batches.append(batch)
+    
+    # Process each batch
+    with st.text(f"Processing {len(cluster_batches)} batches of clusters..."):
+        progress_bar = st.progress(0)
         
-    Returns:
-    --------
-    topic : str
-        Generated topic title
-    """
-    # Use high confidence keywords for topic generation if available
-    if len(high_confidence_keywords) >= 5:
-        sample_keywords = high_confidence_keywords[:min(20, len(high_confidence_keywords))]
-    else:
-        sample_keywords = keywords[:min(20, len(keywords))]
-    
-    # Extract key phrases from the keywords to understand common themes
-    combined_text = " ".join(sample_keywords)
-    key_phrases = kw_model.extract_keywords(combined_text, keyphrase_ngram_range=(1, 3), top_n=5)
-    theme_phrases = [kp[0] for kp in key_phrases]
-    
-    # Generate topic with GPT if enabled
-    if use_gpt and api_key:
-        try:
-            openai.api_key = api_key
+        for i, batch in enumerate(cluster_batches):
+            prompt = "Generate content topics for multiple keyword clusters:\n\n"
             
-            # Create a prompt focusing on aligning the topic with the actual keywords
-            prompt = f"""You're creating a specific content topic for these keywords:
-
-KEYWORDS: {', '.join(sample_keywords)}
-
-PRIMARY CATEGORY: {a_tag}
-SECONDARY ATTRIBUTES: {', '.join(b_tags[:3]) if b_tags else 'none'}
-KEY THEMES: {', '.join(theme_phrases)}
-
-Create a concise, focused topic title that:
-1. Accurately represents these SPECIFIC keywords (don't make up unrelated topics)
-2. Uses {a_tag} as the main category
-3. Includes one or more of the key themes
-
-The topic should NOT include keywords that aren't related to the sample keywords.
-BAD EXAMPLE: "Window Installation Guide" for keywords about door hardware
-GOOD EXAMPLE: "Interior Door Hardware: Selection & Installation Guide" for keywords about door hardware
-
-Your response should be just the topic title (15 words max), nothing else.
-"""
+            # Add each cluster to the prompt
+            for cluster in batch:
+                prompt += f"CLUSTER {cluster['id']}:\n"
+                prompt += f"Category: {cluster['a_tag']}\n"
+                prompt += f"Attributes: {', '.join(cluster['b_tags'])}\n"
+                prompt += f"Keywords: {', '.join(cluster['keywords'])}\n"
+                prompt += f"Is Miscellaneous: {'Yes' if cluster['is_outlier'] else 'No'}\n\n"
             
-            response = openai.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.4,
-                max_tokens=25
-            )
+            prompt += """For each cluster, generate 3 content topic ideas in JSON format:
+            {
+              "results": [
+                {
+                  "cluster_id": 1,
+                  "topics": [
+                    {"title": "Topic 1 Title", "format": "Format 1", "value": "Brief value proposition"},
+                    {"title": "Topic 2 Title", "format": "Format 2", "value": "Brief value proposition"},
+                    {"title": "Topic 3 Title", "format": "Format 3", "value": "Brief value proposition"}
+                  ]
+                },
+                {
+                  "cluster_id": 2,
+                  "topics": [...]
+                }
+              ]
+            }
+            """
             
-            topic = response.choices[0].message.content.strip()
-            
-            # Validate if the topic is too long or empty
-            if len(topic.split()) > 15 or not topic:
-                raise Exception("Invalid topic length")
+            try:
+                response = openai.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.7,
+                    response_format={"type": "json_object"},
+                    max_tokens=2000
+                )
                 
-            return topic
+                # Parse results
+                try:
+                    result_json = json.loads(response.choices[0].message.content)
+                    for cluster_result in result_json.get("results", []):
+                        cluster_id = cluster_result.get("cluster_id")
+                        topics = cluster_result.get("topics", [])
+                        
+                        if cluster_id is not None and topics:
+                            # Extract topics for this cluster
+                            topic_ideas = []
+                            expanded_ideas = []
+                            value_props = []
+                            
+                            for topic in topics:
+                                title = topic.get("title", "")
+                                format_type = topic.get("format", "")
+                                value = topic.get("value", "")
+                                
+                                if title:
+                                    topic_ideas.append(title)
+                                    if format_type:
+                                        expanded_ideas.append(f"{title} ({format_type})")
+                                    else:
+                                        expanded_ideas.append(title)
+                                    value_props.append(value)
+                            
+                            # Store results
+                            all_results[cluster_id] = {
+                                "topic_ideas": topic_ideas,
+                                "expanded_ideas": expanded_ideas,
+                                "value_props": value_props
+                            }
+                except Exception as e:
+                    # If JSON parsing fails, use basic topics for this batch
+                    for cluster in batch:
+                        cluster_id = cluster["id"]
+                        a_tag = cluster["a_tag"]
+                        b_tags = cluster["b_tags"]
+                        
+                        topic_base = f"{a_tag.title()}"
+                        if b_tags:
+                            topic_base += f" {b_tags[0].title()}"
+                            
+                        all_results[cluster_id] = {
+                            "topic_ideas": [
+                                f"Complete Guide to {topic_base}", 
+                                f"{topic_base} Comparison", 
+                                f"How to Choose {topic_base}"
+                            ],
+                            "expanded_ideas": [
+                                f"Complete Guide to {topic_base} (Guide)", 
+                                f"{topic_base} Comparison (Comparison)", 
+                                f"How to Choose {topic_base} (Guide)"
+                            ],
+                            "value_props": [
+                                "Provides comprehensive information on this topic",
+                                "Helps readers compare options",
+                                "Guides decision-making process"
+                            ]
+                        }
+            except Exception as e:
+                # If API call fails, use basic topics
+                for cluster in batch:
+                    cluster_id = cluster["id"]
+                    a_tag = cluster["a_tag"]
+                    b_tags = cluster["b_tags"]
+                    
+                    topic_base = f"{a_tag.title()}"
+                    if b_tags:
+                        topic_base += f" {b_tags[0].title()}"
+                        
+                    all_results[cluster_id] = {
+                        "topic_ideas": [
+                            f"Guide to {topic_base}", 
+                            f"{topic_base} Overview", 
+                            f"{topic_base} Tips"
+                        ],
+                        "expanded_ideas": [
+                            f"Guide to {topic_base} (Guide)", 
+                            f"{topic_base} Overview (Overview)", 
+                            f"{topic_base} Tips (Tips)"
+                        ],
+                        "value_props": [
+                            "Provides comprehensive information on this topic",
+                            "Gives an overview of key concepts",
+                            "Offers practical advice"
+                        ]
+                    }
             
-        except Exception as e:
-            # Fall back to simple topic generation
-            if theme_phrases:
-                main_theme = theme_phrases[0].title()
-                return f"{a_tag.title()} {main_theme}"
-            else:
-                return f"{a_tag.title()} {b_tags[0].title() if b_tags else 'Guide'}"
-    else:
-        # Generate simple topic without GPT
-        if theme_phrases:
-            main_theme = theme_phrases[0].title()
-            return f"{a_tag.title()} {main_theme}"
-        else:
-            return f"{a_tag.title()} {b_tags[0].title() if b_tags else 'Guide'}"
+            # Update progress
+            progress_bar.progress((i + 1) / len(cluster_batches))
+        
+        progress_bar.empty()
+    return all_results
 
 # Helper Functions for GPT Integration
 def generate_gpt_topics(keywords, a_tags, b_tags, api_key, frequency_data=None):
@@ -1163,11 +1391,10 @@ def generate_basic_topics(keywords, a_tags, b_tags):
     
     return topic_ideas, expanded_ideas, value_props
 
-# NEW: Function to create keyword-topic mapping for CSV export
 def create_keyword_topic_mapping(df_filtered):
     """Create a mapping between keywords and their associated content topics"""
     # Create a subset of the DataFrame with just the essential columns
-    keyword_topic_df = df_filtered[["Keywords", "Cluster", "Cluster_Label", "Content_Topic", "Cluster_Confidence"]]
+    keyword_topic_df = df_filtered[["Keywords", "Cluster", "Subcluster", "Cluster_Label", "Content_Topic", "Cluster_Confidence"]]
     
     # Sort by Cluster and then by Confidence (descending)
     keyword_topic_df = keyword_topic_df.sort_values(
@@ -1677,7 +1904,7 @@ elif mode == "Full Tagging":
                         sample_b_tags = df["B:Tag"].fillna("").tolist()[:200]
                         
                         # Get enriched embeddings with text-embedding-3-small
-                        sample_emb = get_enriched_openai_embeddings(
+                        sample_emb = get_cached_enriched_embeddings(
                             sample_kws, 
                             {'A': sample_a_tags, 'B': sample_b_tags}, 
                             api_key
@@ -1757,20 +1984,28 @@ elif mode == "Full Tagging":
             """)
 
         if st.button("Generate Intent-Based Clusters", key="generate_intent_clusters"):
+            # Clear memory before processing
+            gc.collect()
+            
             with st.spinner("Analyzing keyword patterns with semantic intent-based clustering..."):
                 # Get models
                 embedding_model, _ = get_models()
                 
                 # Use the enhanced two-stage clustering with improved parameter values
-                df_clustered, cluster_info = two_stage_clustering(
-                    df, 
-                    cluster_method=cluster_method,
-                    embedding_model=embedding_model,
-                    api_key=api_key,
-                    use_openai_embeddings=use_openai_embeddings,
-                    min_shared_keywords=min_shared_keywords,
-                    similarity_threshold=similarity_threshold  # Will be auto-adjusted if use_auto_threshold is True
-                )
+                try:
+                    with timeout(600):  # 10 minute timeout
+                        df_clustered, cluster_info = two_stage_clustering(
+                            df, 
+                            cluster_method=cluster_method,
+                            embedding_model=embedding_model,
+                            api_key=api_key,
+                            use_openai_embeddings=use_openai_embeddings,
+                            min_shared_keywords=min_shared_keywords,
+                            similarity_threshold=similarity_threshold  # Will be auto-adjusted if use_auto_threshold is True
+                        )
+                except TimeoutError:
+                    st.error("Clustering timed out. Try using fewer keywords or more aggressive clustering settings.")
+                    st.stop()
                 
                 # Generate descriptive labels for each cluster
                 use_gpt_descriptors = use_gpt and api_key
@@ -1984,13 +2219,21 @@ elif mode == "Content Topic Clustering":
                     """,
                     key="topic_clustering_approach"
                 )
-                
-                # GPT option
-                if use_gpt:
-                    use_gpt_for_topics = st.checkbox("Use GPT for topic generation", value=True if api_key else False,
-                                                  help="Generate more creative topic ideas with GPT", key="use_gpt_topics")
-                    if use_gpt_for_topics and not api_key:
-                        st.warning("API key required for GPT topic generation")
+            
+            # Performance optimization options
+            st.subheader("Performance Options for Large Datasets")
+            use_fast_mode = st.checkbox(
+                "Use fast mode for large datasets (recommended for >500 keywords)", 
+                value=True if len(df) > 500 else False,
+                help="Processes multiple clusters in batches and uses more efficient algorithms"
+            )
+            
+            # GPT option
+            if use_gpt:
+                use_gpt_for_topics = st.checkbox("Use GPT for topic generation", value=True if api_key else False,
+                                              help="Generate more creative topic ideas with GPT", key="use_gpt_topics")
+                if use_gpt_for_topics and not api_key:
+                    st.warning("API key required for GPT topic generation")
 
             # Add embedding diagnostics feature
             with st.expander("🔍 Embedding Diagnostics"):
@@ -2009,7 +2252,7 @@ elif mode == "Content Topic Clustering":
                             sample_b_tags = filtered_df["B:Tag"].fillna("").tolist()[:200]
                             
                             # Get enriched embeddings with text-embedding-3-small
-                            sample_emb = get_enriched_openai_embeddings(
+                            sample_emb = get_cached_enriched_embeddings(
                                 sample_kws, 
                                 {'A': sample_a_tags, 'B': sample_b_tags}, 
                                 api_key
@@ -2104,6 +2347,9 @@ elif mode == "Content Topic Clustering":
                     st.error("Please provide an OpenAI API key to use GPT for topic generation")
                     st.stop()
                 
+                # Clear memory before processing
+                gc.collect()
+                
                 with st.spinner("Processing keywords and generating topics..."):
                     progress_bar = st.progress(0)
                     
@@ -2119,153 +2365,253 @@ elif mode == "Content Topic Clustering":
                     else:
                         df_filtered = df.copy()
                     
+                    # Reduce dataframe size by selecting only needed columns
+                    df_filtered = df_filtered[["Keywords", "A:Tag", "B:Tag", "C:Tag"]]
+                    
                     # Apply semantic intent-based clustering
                     progress_bar.progress(0.1)
                     st.text("Applying semantic intent-based clustering by A:Tag...")
                     
-                    df_clustered, cluster_info = two_stage_clustering(
-                        df_filtered, 
-                        cluster_method=clustering_approach,
-                        embedding_model=embedding_model,
-                        api_key=api_key,
-                        use_openai_embeddings=use_openai_embeddings,
-                        min_shared_keywords=min_shared_keywords,
-                        similarity_threshold=similarity_threshold  # Will be auto-adjusted if auto_threshold is True
-                    )
-                    
-                    # Generate descriptive labels for each cluster
-                    use_gpt_descriptors = use_gpt and api_key
-                    cluster_descriptors = generate_cluster_descriptors(cluster_info, use_gpt_descriptors, api_key)
-                    
-                    # Combine the clustered data with the filtered dataframe
-                    df_filtered = df_filtered.reset_index(drop=True)
-                    df_filtered["Cluster"] = df_clustered["Cluster"] 
-                    df_filtered["A_Group"] = df_clustered["A_Group"]
-                    df_filtered["Subcluster"] = df_clustered["Subcluster"]
-                    df_filtered["Cluster_Label"] = df_filtered["Cluster"].map(cluster_descriptors)
-                    df_filtered["Cluster_Confidence"] = df_clustered["Cluster_Confidence"]
-                    df_filtered["Is_Outlier"] = df_clustered["Is_Outlier"]
-                    
-                    progress_bar.progress(0.5)
-                    
-                    # Generate topic insights for each cluster
-                    st.text("Generating content topics for each cluster...")
-                    
-                    # Reset progress tracking for topic generation
-                    cluster_insights = []
-                    topic_map = {}  # Map of cluster IDs to topic names
-                    
-                    # Process each cluster
-                    cluster_ids = sorted(cluster_info.keys())
-                    for i, cluster_id in enumerate(cluster_ids):
-                        info = cluster_info[cluster_id]
-                        a_tag = info["a_tag"]
-                        is_outlier_cluster = info.get("is_outlier_cluster", False)
+                    # Use fast mode for large datasets
+                    if use_fast_mode and len(df_filtered) > 500:
+                        st.text("Using optimized processing for large dataset...")
                         
-                        # Get cluster dataframe
-                        cluster_df = df_filtered[df_filtered["Cluster"] == cluster_id]
+                        # Use more aggressive min_shared_keywords to create fewer clusters
+                        adaptive_min_shared = min(10, max(5, int(len(df_filtered) / 100)))
                         
-                        # Filter for high confidence keywords for better quality topics
-                        high_conf_df = cluster_df[cluster_df["Cluster_Confidence"] >= topic_confidence_threshold]
+                        try:
+                            with timeout(600):  # 10 minute timeout
+                                df_clustered, cluster_info = two_stage_clustering(
+                                    df_filtered, 
+                                    cluster_method=clustering_approach,
+                                    embedding_model=embedding_model,
+                                    api_key=api_key,
+                                    use_openai_embeddings=use_openai_embeddings,
+                                    min_shared_keywords=adaptive_min_shared,  # Adaptive value
+                                    similarity_threshold=similarity_threshold  # Will be auto-adjusted if needed
+                                )
+                        except TimeoutError:
+                            st.error("Clustering timed out. Try using fewer keywords or more aggressive clustering settings.")
+                            st.stop()
+                            
+                        # Generate cluster labels with batching
+                        use_gpt_descriptors = use_gpt and api_key
+                        cluster_descriptors = generate_cluster_descriptors(cluster_info, use_gpt_descriptors, api_key)
                         
-                        # Get the keywords from the cluster - use high confidence for topics
-                        if not is_outlier_cluster and len(high_conf_df) >= 5:
-                            # Use high confidence keywords for regular clusters
-                            keywords_for_topics = high_conf_df["Keywords"].tolist()
-                            high_confidence_keywords = keywords_for_topics
-                        else:
-                            # For outlier clusters or small clusters, use all keywords
-                            keywords_for_topics = cluster_df["Keywords"].tolist()
-                            high_confidence_keywords = cluster_df[cluster_df["Cluster_Confidence"] >= topic_confidence_threshold]["Keywords"].tolist()
+                        # Combine the clustered data with the filtered dataframe
+                        df_filtered = df_filtered.reset_index(drop=True)
+                        df_filtered["Cluster"] = df_clustered["Cluster"] 
+                        df_filtered["A_Group"] = df_clustered["A_Group"]
+                        df_filtered["Subcluster"] = df_clustered["Subcluster"]
+                        df_filtered["Cluster_Label"] = df_filtered["Cluster"].map(cluster_descriptors)
+                        df_filtered["Cluster_Confidence"] = df_clustered["Cluster_Confidence"]
+                        df_filtered["Is_Outlier"] = df_clustered["Is_Outlier"]
                         
-                        # Sample keywords for topic generation
-                        sample_keywords = keywords_for_topics[:min(30, len(keywords_for_topics))]
+                        # Initialize data structures
+                        cluster_insights = []
+                        topic_map = {}
                         
-                        # Extract top tags
-                        top_b_tags = info["b_tags"]
-                        
-                        # Optional: Get frequency data 
-                        kw_freq = None
-                        if "Count" in df_filtered.columns:
-                            kw_freq = dict(zip(cluster_df["Keywords"], cluster_df["Count"]))
-                        
-                        # Generate a main topic specifically for this cluster based on its keywords
-                        cluster_main_topic = generate_topic_for_cluster(
-                            cluster_id, 
-                            info, 
-                            keywords_for_topics, 
-                            high_confidence_keywords, 
-                            a_tag, 
-                            top_b_tags, 
-                            kw_model, 
-                            use_gpt_for_topics, 
-                            api_key
-                        )
-                        
-                        # Generate additional topic ideas with GPT or basic approach
+                        # Generate topics in batches
                         if use_gpt_for_topics and api_key:
-                            topic_ideas, expanded_ideas, value_props = generate_gpt_topics(
-                                sample_keywords, [a_tag], top_b_tags, api_key, kw_freq
-                            )
-                            # Insert the main topic as the first idea
-                            topic_ideas.insert(0, cluster_main_topic)
-                            expanded_ideas.insert(0, f"{cluster_main_topic} (Primary Topic)")
-                            value_props.insert(0, "Primary topic aligned with this specific keyword cluster")
+                            batch_results = batch_generate_topics(cluster_info, api_key, max_clusters_per_batch=5)
                         else:
-                            # Basic topic generation
-                            topic_ideas, expanded_ideas, value_props = generate_basic_topics(
-                                sample_keywords, [a_tag], top_b_tags
-                            )
-                            # Insert the main topic as the first idea
-                            topic_ideas.insert(0, cluster_main_topic)
-                            expanded_ideas.insert(0, f"{cluster_main_topic} (Primary Topic)")
-                            value_props.insert(0, "Primary topic aligned with this specific keyword cluster")
+                            # Create fallback batch results using basic approach
+                            batch_results = {}
+                            for cluster_id, info in cluster_info.items():
+                                a_tag = info["a_tag"]
+                                b_tags = info["b_tags"][:3] if info["b_tags"] else []
+                                sample_keywords = info["keywords"][:min(15, len(info["keywords"]))]
+                                
+                                # Generate basic topics
+                                topic_ideas, expanded_ideas, value_props = generate_basic_topics(
+                                    sample_keywords, [a_tag], b_tags
+                                )
+                                
+                                batch_results[cluster_id] = {
+                                    "topic_ideas": topic_ideas,
+                                    "expanded_ideas": expanded_ideas,
+                                    "value_props": value_props
+                                }
                         
-                        # Get cluster label
-                        cluster_label = cluster_descriptors[cluster_id] if cluster_id in cluster_descriptors else f"Cluster {cluster_id}"
+                        # Process results into format expected by the rest of the code
+                        for cluster_id, info in cluster_info.items():
+                            results = batch_results.get(cluster_id, {})
+                            
+                            topic_ideas = results.get("topic_ideas", [])
+                            if not topic_ideas:
+                                topic_ideas = [f"Content about {info['a_tag']}"]
+                                
+                            expanded_ideas = results.get("expanded_ideas", [])
+                            if not expanded_ideas or len(expanded_ideas) < len(topic_ideas):
+                                expanded_ideas = [f"{idea} (Guide)" for idea in topic_ideas]
+                                
+                            value_props = results.get("value_props", [])
+                            if not value_props or len(value_props) < len(topic_ideas):
+                                value_props = ["Provides valuable information on this topic"] * len(topic_ideas)
+                            
+                            # Filter for high confidence keywords
+                            high_conf_df = df_filtered[
+                                (df_filtered["Cluster"] == cluster_id) & 
+                                (df_filtered["Cluster_Confidence"] >= topic_confidence_threshold)
+                            ]
+                            
+                            # Add to cluster insights
+                            cluster_insights.append({
+                                "cluster_id": cluster_id,
+                                "cluster_label": cluster_descriptors.get(cluster_id, f"Cluster {cluster_id}"),
+                                "size": info["size"],
+                                "high_confidence_count": len(high_conf_df),
+                                "a_tags": [info["a_tag"]],
+                                "b_tags": info["b_tags"],
+                                "c_tags": info["c_tags"],
+                                "keywords": info["keywords"],
+                                "high_confidence_keywords": high_conf_df["Keywords"].tolist(),
+                                "sample_keywords": info["keywords"][:min(15, len(info["keywords"]))],
+                                "topic_phrases": topic_ideas,  # Using topic ideas as topic phrases
+                                "topic_ideas": topic_ideas,
+                                "expanded_ideas": expanded_ideas,
+                                "value_props": value_props,
+                                "analysis": f"Cluster of {info['a_tag']} keywords",
+                                "is_outlier_cluster": info.get("is_outlier_cluster", False)
+                            })
+                            
+                            # Create topic map
+                            if info.get("is_outlier_cluster", False):
+                                topic_map[cluster_id] = f"{cluster_descriptors.get(cluster_id, '')}: Miscellaneous"
+                            elif topic_ideas:
+                                topic_map[cluster_id] = f"{cluster_descriptors.get(cluster_id, '')}: {topic_ideas[0]}"
+                            else:
+                                topic_map[cluster_id] = cluster_descriptors.get(cluster_id, f"Cluster {cluster_id}")
+                    else:
+                        # Standard processing for smaller datasets
+                        try:
+                            with timeout(600):  # 10 minute timeout
+                                df_clustered, cluster_info = two_stage_clustering(
+                                    df_filtered, 
+                                    cluster_method=clustering_approach,
+                                    embedding_model=embedding_model,
+                                    api_key=api_key,
+                                    use_openai_embeddings=use_openai_embeddings,
+                                    min_shared_keywords=min_shared_keywords,
+                                    similarity_threshold=similarity_threshold  # Will be auto-adjusted if needed
+                                )
+                        except TimeoutError:
+                            st.error("Clustering timed out. Try using fewer keywords or more aggressive clustering settings.")
+                            st.stop()
                         
-                        # Store the primary topic name in the mapping (use the cluster-specific topic)
-                        if is_outlier_cluster:
-                            topic_map[cluster_id] = f"{cluster_label} (Miscellaneous)"
-                        else:
-                            # Use the custom cluster-specific topic
-                            topic_map[cluster_id] = cluster_main_topic
+                        # Generate descriptive labels for each cluster
+                        use_gpt_descriptors = use_gpt and api_key
+                        cluster_descriptors = generate_cluster_descriptors(cluster_info, use_gpt_descriptors, api_key)
                         
-                        # Extract topic phrases for visualization
-                        if keywords_for_topics:
-                            combined_text = " ".join(sample_keywords)
-                            key_phrases = kw_model.extract_keywords(combined_text, keyphrase_ngram_range=(1, 3), top_n=5)
-                            topic_phrases = [kp[0] for kp in key_phrases]
-                        else:
-                            topic_phrases = []
+                        # Combine the clustered data with the filtered dataframe
+                        df_filtered = df_filtered.reset_index(drop=True)
+                        df_filtered["Cluster"] = df_clustered["Cluster"] 
+                        df_filtered["A_Group"] = df_clustered["A_Group"]
+                        df_filtered["Subcluster"] = df_clustered["Subcluster"]
+                        df_filtered["Cluster_Label"] = df_filtered["Cluster"].map(cluster_descriptors)
+                        df_filtered["Cluster_Confidence"] = df_clustered["Cluster_Confidence"]
+                        df_filtered["Is_Outlier"] = df_clustered["Is_Outlier"]
                         
-                        # Create a simple analysis description
-                        if is_outlier_cluster:
-                            cluster_analysis = f"Miscellaneous {a_tag} keywords that didn't share enough semantic intent with others."
-                        else:
-                            cluster_analysis = f"Cluster of {a_tag} keywords with shared semantic intent focused on {', '.join(top_b_tags[:2] if top_b_tags else ['general attributes'])}"
+                        progress_bar.progress(0.5)
                         
-                        cluster_insights.append({
-                            "cluster_id": cluster_id,
-                            "cluster_label": cluster_label,
-                            "size": len(cluster_df),
-                            "high_confidence_count": len(high_conf_df),
-                            "a_tags": [a_tag],  # Now always a single A tag per cluster
-                            "b_tags": top_b_tags,
-                            "c_tags": info["c_tags"],
-                            "keywords": cluster_df["Keywords"].tolist(),
-                            "high_confidence_keywords": high_confidence_keywords,
-                            "sample_keywords": sample_keywords,
-                            "topic_phrases": topic_phrases,
-                            "topic_ideas": topic_ideas,
-                            "expanded_ideas": expanded_ideas,
-                            "value_props": value_props,
-                            "analysis": cluster_analysis,
-                            "is_outlier_cluster": is_outlier_cluster
-                        })
+                        # Generate topic insights for each cluster
+                        st.text("Generating content topics for each cluster...")
                         
-                        # Update progress
-                        progress_bar.progress(0.5 + (0.4 * (i + 1) / len(cluster_ids)))
+                        # Reset progress tracking for topic generation
+                        cluster_insights = []
+                        topic_map = {}  # Map of cluster IDs to topic names
+                        
+                        # Process each cluster
+                        cluster_ids = sorted(cluster_info.keys())
+                        for i, cluster_id in enumerate(cluster_ids):
+                            info = cluster_info[cluster_id]
+                            a_tag = info["a_tag"]
+                            is_outlier_cluster = info.get("is_outlier_cluster", False)
+                            
+                            # Get cluster dataframe
+                            cluster_df = df_filtered[df_filtered["Cluster"] == cluster_id]
+                            
+                            # Filter for high confidence keywords for better quality topics
+                            high_conf_df = cluster_df[cluster_df["Cluster_Confidence"] >= topic_confidence_threshold]
+                            
+                            # Get the keywords from the cluster - use high confidence for topics
+                            if not is_outlier_cluster and len(high_conf_df) >= 5:
+                                # Use high confidence keywords for regular clusters
+                                keywords_for_topics = high_conf_df["Keywords"].tolist()
+                                high_confidence_keywords = keywords_for_topics
+                            else:
+                                # For outlier clusters or small clusters, use all keywords
+                                keywords_for_topics = cluster_df["Keywords"].tolist()
+                                high_confidence_keywords = cluster_df[cluster_df["Cluster_Confidence"] >= topic_confidence_threshold]["Keywords"].tolist()
+                            
+                            # Sample keywords for topic generation
+                            sample_keywords = keywords_for_topics[:min(30, len(keywords_for_topics))]
+                            
+                            # Extract top tags
+                            top_b_tags = info["b_tags"]
+                            
+                            # Optional: Get frequency data 
+                            kw_freq = None
+                            if "Count" in df_filtered.columns:
+                                kw_freq = dict(zip(cluster_df["Keywords"], cluster_df["Count"]))
+                            
+                            # Generate topics with GPT or basic approach
+                            if use_gpt_for_topics and api_key:
+                                topic_ideas, expanded_ideas, value_props = generate_gpt_topics(
+                                    sample_keywords, [a_tag], top_b_tags, api_key, kw_freq
+                                )
+                            else:
+                                # Basic topic generation
+                                topic_ideas, expanded_ideas, value_props = generate_basic_topics(
+                                    sample_keywords, [a_tag], top_b_tags
+                                )
+                            
+                            # Get cluster label
+                            cluster_label = cluster_descriptors[cluster_id] if cluster_id in cluster_descriptors else f"Cluster {cluster_id}"
+                            
+                            # Store the primary topic name in the mapping (use descriptive label if available)
+                            if is_outlier_cluster:
+                                topic_map[cluster_id] = f"{cluster_label} (Miscellaneous)"
+                            elif topic_ideas:
+                                topic_map[cluster_id] = f"{cluster_label}: {topic_ideas[0]}"
+                            else:
+                                topic_map[cluster_id] = cluster_label
+                            
+                            # Extract topic phrases for visualization
+                            if keywords_for_topics:
+                                combined_text = " ".join(sample_keywords)
+                                key_phrases = kw_model.extract_keywords(combined_text, keyphrase_ngram_range=(1, 3), top_n=5)
+                                topic_phrases = [kp[0] for kp in key_phrases]
+                            else:
+                                topic_phrases = []
+                            
+                            # Create a simple analysis description
+                            if is_outlier_cluster:
+                                cluster_analysis = f"Miscellaneous {a_tag} keywords that didn't share enough semantic intent with others."
+                            else:
+                                cluster_analysis = f"Cluster of {a_tag} keywords with shared semantic intent focused on {', '.join(top_b_tags[:2] if top_b_tags else ['general attributes'])}"
+                            
+                            cluster_insights.append({
+                                "cluster_id": cluster_id,
+                                "cluster_label": cluster_label,
+                                "size": len(cluster_df),
+                                "high_confidence_count": len(high_conf_df),
+                                "a_tags": [a_tag],  # Now always a single A tag per cluster
+                                "b_tags": top_b_tags,
+                                "c_tags": info["c_tags"],
+                                "keywords": cluster_df["Keywords"].tolist(),
+                                "high_confidence_keywords": high_confidence_keywords,
+                                "sample_keywords": sample_keywords,
+                                "topic_phrases": topic_phrases,
+                                "topic_ideas": topic_ideas,
+                                "expanded_ideas": expanded_ideas,
+                                "value_props": value_props,
+                                "analysis": cluster_analysis,
+                                "is_outlier_cluster": is_outlier_cluster
+                            })
+                            
+                            # Update progress
+                            progress_bar.progress(0.5 + (0.4 * (i + 1) / len(cluster_ids)))
                     
                     # Add topic labels to the DataFrame
                     df_filtered["Content_Topic"] = df_filtered["Cluster"].map(topic_map)
