@@ -545,7 +545,8 @@ def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
 
 # Enhanced semantic intent-based clustering - UPDATED for text-embedding-3-small
 def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, api_key=None,
-                        use_openai_embeddings=False, min_shared_keywords=3, similarity_threshold=0.65):
+                        use_openai_embeddings=False, min_shared_keywords=3, similarity_threshold=0.65,
+                        precomputed_embeddings=None):
     """
     Perform two-stage clustering with semantic intent-based approach:
     1. Group by A tag
@@ -648,8 +649,14 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
                 if not keywords or (not embedding_model and not use_openai_embeddings):
                     group_df["Subcluster"] = 0
                 else:
-                    # Generate embeddings based on selected method
-                    if use_openai_embeddings and api_key:
+                    # Use pre-computed embeddings if provided
+                    if precomputed_embeddings is not None:
+                        # Extract the embeddings for this specific group
+                        group_indices = group_df.index
+                        group_embeddings = precomputed_embeddings[group_indices]
+                        embeddings = group_embeddings
+                    # Otherwise generate embeddings based on selected method
+                    elif use_openai_embeddings and api_key:
                         # Use enriched OpenAI embeddings for better results
                         a_tags = group_df["A:Tag"].fillna("").tolist()
                         b_tags = group_df["B:Tag"].fillna("").tolist()
@@ -661,6 +668,7 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
                             {'A': a_tags, 'B': b_tags, 'C': c_tags}, 
                             api_key
                         )
+                        
                     else:
                         # Use SentenceTransformer embeddings
                         embeddings = embedding_model.encode(keywords)
@@ -1882,18 +1890,23 @@ elif mode == "Full Tagging":
             """,
             key="full_tagging_clustering_approach"
         )
-        
-        # Rest of your existing code (embedding diagnostics, cost estimation, etc.)
-        
+
+        # Add option for enhanced clustering
+        use_enhanced_clustering = st.checkbox(
+            "Use enhanced content-focused clustering", 
+            value=True,
+            help="Uses the exact same clustering algorithm as Content Topic Clustering (recommended)"
+        )
+                
         if st.button("Generate Intent-Based Clusters", key="generate_intent_clusters"):
             # Clear memory before processing
             gc.collect()
             
             with st.spinner("Analyzing keyword patterns with semantic intent-based clustering..."):
-                # Get models
-                embedding_model, _ = get_models()
+                # Get models - get both like Content Topic does
+                embedding_model, kw_model = get_models()
                 
-                # Filter by selected A-tags if any were chosen - SAME AS CONTENT TOPIC
+                # Filter by selected A-tags if any were chosen
                 if selected_a_tags:
                     df_filtered = df[df["A:Tag"].isin(selected_a_tags)].copy()
                     if len(df_filtered) == 0:
@@ -1902,11 +1915,48 @@ elif mode == "Full Tagging":
                 else:
                     df_filtered = df.copy()
                 
-                # Use the enhanced two-stage clustering with improved parameter values - IDENTICAL TO CONTENT TOPIC
+                # CRITICAL: Only use these specific columns like Content Topic does
+                df_filtered = df_filtered[["Keywords", "A:Tag", "B:Tag", "C:Tag"]]
+                
+                # Use the enhanced two-stage clustering with improved parameter values
                 st.text("Processing clusters... this might take a few minutes for large datasets")
                 
-                # Use timeout mechanism like in Content Topic Clustering
-                try:
+                if use_enhanced_clustering and use_openai_embeddings and api_key:
+                    # EXACT COPY of clustering approach from Content Topic Clustering
+                    try:
+                        # Add progress indicator as Content Topic does
+                        progress_bar = st.progress(0.1)
+                        
+                        # Get embeddings with special context - this is the key difference
+                        enriched_embeddings = get_cached_enriched_embeddings(
+                            df_filtered["Keywords"].tolist(),
+                            {'A': df_filtered["A:Tag"].tolist(), 
+                             'B': df_filtered["B:Tag"].fillna("").tolist(),
+                             'C': df_filtered["C:Tag"].fillna("").tolist()},
+                            api_key
+                        )
+                        
+                        # Override the clustering approach to use these enriched embeddings
+                        df_clustered, cluster_info = two_stage_clustering(
+                            df_filtered,
+                            cluster_method="Semantic",  # Force semantic for enhanced mode
+                            embedding_model=embedding_model,  
+                            api_key=api_key,
+                            use_openai_embeddings=use_openai_embeddings,
+                            min_shared_keywords=min_shared_keywords,
+                            similarity_threshold=similarity_threshold,
+                            # Pass pre-computed embeddings
+                            precomputed_embeddings=enriched_embeddings
+                        )
+                        
+                        progress_bar.progress(0.5)
+                        
+                    except Exception as e:
+                        st.error(f"Clustering encountered an error: {e}")
+                        st.warning("Try using fewer keywords or more aggressive clustering settings.")
+                        st.stop()
+                else:
+                    # Use standard clustering
                     df_clustered, cluster_info = two_stage_clustering(
                         df_filtered, 
                         cluster_method=clustering_approach,
@@ -1916,17 +1966,12 @@ elif mode == "Full Tagging":
                         min_shared_keywords=min_shared_keywords,
                         similarity_threshold=similarity_threshold
                     )
-                except Exception as e:
-                    st.error(f"Clustering encountered an error: {e}")
-                    st.error("Try using fewer keywords or more aggressive clustering settings.")
-                    st.stop()
                     
-                # Generate descriptive labels for each cluster - IDENTICAL TO CONTENT TOPIC
+                # Generate descriptive labels for each cluster
                 use_gpt_descriptors = use_gpt and api_key
                 cluster_descriptors = generate_cluster_descriptors(cluster_info, use_gpt_descriptors, api_key)
                 
-                # *** CRITICAL DIFFERENCE: Only work with the filtered dataframe, never with the original df ***
-                # This is what causes the mixing of A-tags
+                # Create results dataframe - never modify the original df
                 results_df = df_filtered.copy()
                 results_df["Cluster"] = df_clustered["Cluster"] 
                 results_df["A_Group"] = df_clustered["A_Group"]
@@ -1937,7 +1982,7 @@ elif mode == "Full Tagging":
                 
                 # Show overview of clusters
                 st.subheader("Semantic Intent-Based Clustering Results")
-                
+                        
                 # Count clusters and outliers
                 total_keywords = len(results_df)
                 total_clusters = len([k for k, v in cluster_info.items() if not v.get("is_outlier_cluster", False)])
