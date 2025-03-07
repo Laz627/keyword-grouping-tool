@@ -1,6 +1,8 @@
+# main.py - Make sure this is the exact content of your file
+
 import streamlit as st
 
-# Set page configuration as the FIRST Streamlit command
+# This MUST be the very first Streamlit command in your script
 st.set_page_config(
     page_title="Keyword Tagging & Topic Generation Tool",
     page_icon="🔍",
@@ -8,7 +10,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Now the rest of your imports
+# Only now import other libraries
 import pandas as pd
 import re
 from collections import Counter
@@ -16,21 +18,15 @@ import numpy as np
 import json
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
-
-# --- KeyBERT & Sentence Embeddings ---
 from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
 from sklearn.cluster import KMeans
-
-# --- NLTK for Tokenization, POS tagging, and Lemmatization ---
 import nltk
 from nltk import word_tokenize, pos_tag
 from nltk.stem import WordNetLemmatizer
-
-# --- OpenAI integration ---
 import openai
 
-# Download required NLTK resources (quietly)
+# Download NLTK resources
 nltk.download('punkt', quiet=True)
 nltk.download('averaged_perceptron_tagger', quiet=True)
 nltk.download('wordnet', quiet=True)
@@ -40,7 +36,7 @@ stop_words = set(stopwords.words('english'))
 
 lemmatizer = WordNetLemmatizer()
 
-# Initialize KeyBERT and SentenceTransformer
+# Initialize models AFTER page config
 @st.cache_resource
 def load_embedding_model():
     return SentenceTransformer('all-MiniLM-L6-v2')
@@ -48,10 +44,7 @@ def load_embedding_model():
 embedding_model = load_embedding_model()
 kw_model = KeyBERT(model=embedding_model)
 
-###
-### Helper Functions for Tagging
-###
-
+# Define helper functions
 def normalize_token(token):
     """Convert token to lowercase and lemmatize (noun mode); also converts 'vs' to 'v'."""
     token = token.lower()
