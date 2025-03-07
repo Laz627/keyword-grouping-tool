@@ -1964,7 +1964,7 @@ elif mode == "Full Tagging":
             """)
 
         # Add this code before the "Generate Intent-Based Clusters" button
-        clustering_approach = st.radio(
+        clustering_method = st.radio(
             "Clustering Approach",
             ["Tag-based", "Semantic", "Hybrid"],
             key="full_tagging_clustering_approach",
@@ -1992,7 +1992,7 @@ elif mode == "Full Tagging":
                 st.text("Processing clusters... this might take a few minutes for large datasets")
                 df_clustered, cluster_info = two_stage_clustering(
                     df_filtered, 
-                    cluster_method=cluster_method,  # Use your existing variable
+                    cluster_method=clustering_method,  # Use the new variable name
                     embedding_model=embedding_model,
                     api_key=api_key,
                     use_openai_embeddings=use_openai_embeddings,
