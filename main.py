@@ -24,6 +24,14 @@ import openai
 from sentence_transformers import SentenceTransformer
 from sklearn.cluster import KMeans
 
+# Try to import docx for Word document export
+try:
+    from docx import Document
+    from io import BytesIO
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
+
 # Download NLTK resources
 nltk.download('punkt', quiet=True)
 nltk.download('averaged_perceptron_tagger', quiet=True)
@@ -410,6 +418,101 @@ Keep your analysis brief but insightful."""
         return insight
     except Exception as e:
         return f"Unable to generate insights. Please check your API key and try again."
+
+def create_cluster_analysis_word_doc(cluster_insights):
+    """Create a formatted Word document with cluster analysis."""
+    if not DOCX_AVAILABLE:
+        raise ImportError("python-docx is required for Word document export")
+    
+    doc = Document()
+    
+    # Add title
+    title = doc.add_heading('Keyword Cluster Analysis Report', level=0)
+    
+    # Add TOC instructions
+    p = doc.add_paragraph()
+    p.add_run('TABLE OF CONTENTS').bold = True
+    doc.add_paragraph('To generate a table of contents, go to the "References" tab in Word and click "Table of Contents"')
+    
+    # Add a page break after instructions
+    doc.add_page_break()
+    
+    # Loop through each cluster to add content
+    for i, insight in enumerate(cluster_insights):
+        cluster_id = insight["cluster_id"]
+        size = insight["size"]
+        
+        # Create cluster heading
+        if insight["a_tags"]:
+            main_tag = insight["a_tags"][0]
+            cluster_heading = f"Cluster {cluster_id}: {main_tag.title()} ({size} keywords)"
+        else:
+            cluster_heading = f"Cluster {cluster_id}: {size} keywords"
+        
+        doc.add_heading(cluster_heading, level=1)
+        
+        # Add cluster analysis
+        doc.add_heading('Cluster Analysis', level=2)
+        doc.add_paragraph(insight['analysis'])
+        
+        # Add tag information
+        if insight['a_tags']:
+            doc.add_heading('Main Tags', level=2)
+            doc.add_paragraph(', '.join(insight['a_tags']))
+        
+        if insight['b_tags']:
+            doc.add_heading('Secondary Tags', level=2)
+            doc.add_paragraph(', '.join(insight['b_tags']))
+        
+        # Add topic phrases
+        if insight['topic_phrases']:
+            doc.add_heading('Key Phrases', level=2)
+            doc.add_paragraph(', '.join(insight['topic_phrases']))
+        
+        # Add content topic suggestions
+        if insight['topic_ideas']:
+            doc.add_heading('Suggested Content Topics', level=2)
+            
+            for j, (idea, value) in enumerate(zip(insight['expanded_ideas'], insight['value_props'])):
+                topic_num = j + 1
+                run = doc.add_paragraph().add_run(f"Topic {topic_num}: {idea}")
+                run.bold = True
+                doc.add_paragraph(value)
+                doc.add_paragraph() # Add some spacing
+        
+        # Add keywords in a table
+        doc.add_heading('Keywords', level=2)
+        
+        # Calculate number of columns and rows for the keyword table
+        keywords = insight['keywords']
+        cols = 3  # We'll use 3 columns
+        
+        if keywords:
+            # Determine number of rows needed
+            rows = (len(keywords) + cols - 1) // cols
+            
+            table = doc.add_table(rows=rows, cols=cols)
+            table.style = 'Table Grid'
+            
+            # Fill the table with keywords
+            keyword_idx = 0
+            for row in range(rows):
+                for col in range(cols):
+                    if keyword_idx < len(keywords):
+                        cell = table.cell(row, col)
+                        cell.text = keywords[keyword_idx]
+                        keyword_idx += 1
+        
+        # Add a page break between clusters (except the last one)
+        if i < len(cluster_insights) - 1:
+            doc.add_page_break()
+    
+    # Save to a BytesIO object
+    doc_buffer = BytesIO()
+    doc.save(doc_buffer)
+    doc_buffer.seek(0)
+    
+    return doc_buffer
 
 # Main UI
 with st.sidebar:
@@ -1120,92 +1223,117 @@ elif mode == "Content Topic Clustering":
         st.subheader("Export Detailed Cluster Analysis")
 
         if st.button("Generate Detailed Cluster Report", key="gen_cluster_report"):
-            # Create a formatted report of all cluster insights
-            report_content = "# KEYWORD CLUSTER ANALYSIS REPORT\n\n"
-            
-            for insight in cluster_insights:
-                cluster_id = insight["cluster_id"]
-                size = insight["size"]
+            with st.spinner("Creating reports in different formats..."):
+                # Create a formatted report of all cluster insights
+                report_content = "# KEYWORD CLUSTER ANALYSIS REPORT\n\n"
                 
-                # Format cluster header
-                if insight["a_tags"]:
-                    main_tag = insight["a_tags"][0]
-                    report_content += f"## Cluster {cluster_id}: {main_tag.title()} ({size} keywords)\n\n"
-                else:
-                    report_content += f"## Cluster {cluster_id}: {size} keywords\n\n"
-                
-                # Add cluster analysis
-                report_content += f"**Cluster Analysis:** {insight['analysis']}\n\n"
-                
-                # Add tag information
-                if insight['a_tags']:
-                    report_content += f"**Main Tags:** {', '.join(insight['a_tags'])}\n\n"
-                if insight['b_tags']:
-                    report_content += f"**Secondary Tags:** {', '.join(insight['b_tags'])}\n\n"
-                
-                # Add topic phrases
-                if insight['topic_phrases']:
-                    report_content += "**Key Phrases:** " + ", ".join(insight['topic_phrases']) + "\n\n"
-                
-                # Add content topic suggestions
-                if insight['topic_ideas']:
-                    report_content += "### Suggested Content Topics\n\n"
+                for insight in cluster_insights:
+                    cluster_id = insight["cluster_id"]
+                    size = insight["size"]
                     
-                    for i, (idea, value) in enumerate(zip(insight['expanded_ideas'], insight['value_props'])):
-                        report_content += f"**Topic {i+1}: {idea}**\n\n"
-                        report_content += f"_{value}_\n\n"
-                        report_content += "---\n\n"
+                    # Format cluster header
+                    if insight["a_tags"]:
+                        main_tag = insight["a_tags"][0]
+                        report_content += f"## Cluster {cluster_id}: {main_tag.title()} ({size} keywords)\n\n"
+                    else:
+                        report_content += f"## Cluster {cluster_id}: {size} keywords\n\n"
+                    
+                    # Add cluster analysis
+                    report_content += f"**Cluster Analysis:** {insight['analysis']}\n\n"
+                    
+                    # Add tag information
+                    if insight['a_tags']:
+                        report_content += f"**Main Tags:** {', '.join(insight['a_tags'])}\n\n"
+                    if insight['b_tags']:
+                        report_content += f"**Secondary Tags:** {', '.join(insight['b_tags'])}\n\n"
+                    
+                    # Add topic phrases
+                    if insight['topic_phrases']:
+                        report_content += "**Key Phrases:** " + ", ".join(insight['topic_phrases']) + "\n\n"
+                    
+                    # Add content topic suggestions
+                    if insight['topic_ideas']:
+                        report_content += "### Suggested Content Topics\n\n"
+                        
+                        for i, (idea, value) in enumerate(zip(insight['expanded_ideas'], insight['value_props'])):
+                            report_content += f"**Topic {i+1}: {idea}**\n\n"
+                            report_content += f"_{value}_\n\n"
+                            report_content += "---\n\n"
+                    
+                    # Add sample keywords
+                    report_content += "### Sample Keywords\n\n"
+                    sample_size = min(20, len(insight['keywords']))
+                    for i, kw in enumerate(insight['keywords'][:sample_size]):
+                        report_content += f"{i+1}. {kw}\n"
+                    
+                    report_content += "\n\n---\n\n"
                 
-                # Add sample keywords
-                report_content += "### Sample Keywords\n\n"
-                sample_size = min(20, len(insight['keywords']))
-                for i, kw in enumerate(insight['keywords'][:sample_size]):
-                    report_content += f"{i+1}. {kw}\n"
+                # Generate Word document if available
+                word_doc_ready = False
+                if DOCX_AVAILABLE:
+                    try:
+                        word_buffer = create_cluster_analysis_word_doc(cluster_insights)
+                        word_doc_ready = True
+                    except Exception as e:
+                        st.error(f"Error generating Word document: {e}")
                 
-                report_content += "\n\n---\n\n"
+                # Also create a CSV version with structured data
+                detailed_rows = []
+                for insight in cluster_insights:
+                    # Basic cluster info
+                    row = {
+                        "cluster_id": insight["cluster_id"],
+                        "size": insight["size"],
+                        "analysis": insight["analysis"],
+                        "main_tags": ", ".join(insight["a_tags"]) if insight["a_tags"] else "",
+                        "secondary_tags": ", ".join(insight["b_tags"]) if insight["b_tags"] else "",
+                        "key_phrases": ", ".join(insight["topic_phrases"]) if insight["topic_phrases"] else "",
+                        "sample_keywords": ", ".join(insight["keywords"][:10]) if insight["keywords"] else ""
+                    }
+                    
+                    # Add topics (up to 5)
+                    for i, topic in enumerate(insight["topic_ideas"][:5]):
+                        row[f"topic_{i+1}"] = topic
+                        if i < len(insight["value_props"]):
+                            row[f"value_{i+1}"] = insight["value_props"][i]
+                    
+                    detailed_rows.append(row)
             
-            # Create a download button for the markdown report
-            st.download_button(
-                "Download Detailed Cluster Analysis (Markdown)",
-                report_content,
-                "cluster_analysis_report.md",
-                "text/markdown",
-                key="download_cluster_report"
-            )
+            # Display download options in columns
+            col1, col2, col3 = st.columns(3)
             
-            # Also create a CSV version with structured data
-            detailed_rows = []
-            for insight in cluster_insights:
-                # Basic cluster info
-                row = {
-                    "cluster_id": insight["cluster_id"],
-                    "size": insight["size"],
-                    "analysis": insight["analysis"],
-                    "main_tags": ", ".join(insight["a_tags"]) if insight["a_tags"] else "",
-                    "secondary_tags": ", ".join(insight["b_tags"]) if insight["b_tags"] else "",
-                    "key_phrases": ", ".join(insight["topic_phrases"]) if insight["topic_phrases"] else "",
-                    "sample_keywords": ", ".join(insight["keywords"][:10]) if insight["keywords"] else ""
-                }
-                
-                # Add topics (up to 5)
-                for i, topic in enumerate(insight["topic_ideas"][:5]):
-                    row[f"topic_{i+1}"] = topic
-                    if i < len(insight["value_props"]):
-                        row[f"value_{i+1}"] = insight["value_props"][i]
-                
-                detailed_rows.append(row)
-            
-            # Create dataframe and download button
-            if detailed_rows:
-                detailed_df = pd.DataFrame(detailed_rows)
-                csv_detailed = detailed_df.to_csv(index=False).encode('utf-8')
+            with col1:
                 st.download_button(
-                    "Download Detailed Cluster Analysis (CSV)",
-                    csv_detailed,
-                    "cluster_analysis_data.csv",
-                    "text/csv",
-                    key="download_cluster_data"
+                    "📄 Download as Markdown",
+                    report_content,
+                    "cluster_analysis_report.md",
+                    "text/markdown",
+                    key="download_cluster_report_md"
                 )
+            
+            with col2:
+                if DOCX_AVAILABLE and word_doc_ready:
+                    st.download_button(
+                        "📝 Download as Word Document",
+                        word_buffer,
+                        "cluster_analysis_report.docx",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        key="download_cluster_report_docx"
+                    )
+                else:
+                    st.info("Word export requires python-docx library")
+            
+            with col3:
+                if detailed_rows:
+                    detailed_df = pd.DataFrame(detailed_rows)
+                    csv_detailed = detailed_df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        "📊 Download as CSV",
+                        csv_detailed,
+                        "cluster_analysis_data.csv",
+                        "text/csv",
+                        key="download_cluster_data_csv"
+                    )
         
         # Create download buttons with unique keys
         st.subheader("Export Results")
