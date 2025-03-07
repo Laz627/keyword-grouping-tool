@@ -1,9 +1,7 @@
-# main.py - Complete Streamlit application
-
-# 1. First import streamlit (no other imports before this)
+# main.py
 import streamlit as st
 
-# 2. Set page config as the FIRST Streamlit command
+# Set page config first
 st.set_page_config(
     page_title="Keyword Tagging & Topic Generation Tool",
     page_icon="🔍",
@@ -11,7 +9,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 3. Now import all other libraries
+# Import other libraries
 import pandas as pd
 import re
 from collections import Counter
@@ -20,14 +18,12 @@ import json
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 from keybert import KeyBERT
-from sentence_transformers import SentenceTransformer
-from sklearn.cluster import KMeans
 import nltk
 from nltk import word_tokenize, pos_tag
 from nltk.stem import WordNetLemmatizer
 import openai
 
-# 4. Download NLTK resources and initialize other non-streamlit objects
+# Download NLTK resources
 nltk.download('punkt', quiet=True)
 nltk.download('averaged_perceptron_tagger', quiet=True)
 nltk.download('wordnet', quiet=True)
@@ -37,40 +33,71 @@ stop_words = set(stopwords.words('english'))
 
 lemmatizer = WordNetLemmatizer()
 
-# 5. Initialize models (after page config is already set)
-@st.cache_resource
-def load_embedding_model():
-    return SentenceTransformer('all-MiniLM-L6-v2')
+# Load models on demand using session state
+def get_models():
+    """Load models on demand to avoid Streamlit/PyTorch conflicts"""
+    if 'models_loaded' not in st.session_state:
+        with st.spinner("Loading NLP models... (this might take a moment)"):
+            try:
+                from sentence_transformers import SentenceTransformer
+                from sklearn.cluster import KMeans
+                
+                # Load models into session state
+                st.session_state.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+                st.session_state.kw_model = KeyBERT(model=st.session_state.embedding_model)
+                st.session_state.models_loaded = True
+            except Exception as e:
+                st.error(f"Error loading models: {e}")
+                st.session_state.models_loaded = False
+                st.stop()
+    
+    return st.session_state.embedding_model, st.session_state.kw_model
 
-embedding_model = load_embedding_model()
-kw_model = KeyBERT(model=embedding_model)
+# All your helper functions that use the models should now access them via get_models()
+def extract_candidate_themes(keywords_list, top_n, progress_bar=None):
+    """Extract candidate themes with dynamic model loading"""
+    _, kw_model = get_models()  # Get models when needed
+    
+    all_phrases = []
+    total = len(keywords_list)
+    for i, kw in enumerate(keywords_list):
+        kps = kw_model.extract_keywords(kw, keyphrase_ngram_range=(1,4), stop_words='english', top_n=top_n)
+        for kp in kps:
+            if kp[0]:
+                all_phrases.append(kp[0].lower())
+        if progress_bar is not None:
+            progress_bar.progress((i+1)/total)
+    return all_phrases
 
-###
-### 6. All helper functions
-###
+# Continue with other function definitions, modified to use get_models() instead of global model variables
+def classify_keyword_three(keyword, seed, omitted_list, user_a_tags):
+    """Process a keyword string with dynamic model loading"""
+    _, kw_model = get_models()  # Get models when needed
+    
+    text = keyword.lower()
+    if seed:
+        pat = rf'\b{re.escape(seed.lower())}\b'
+        text = re.sub(pat, '', text)
+    for omit in omitted_list:
+        pat = rf'\b{re.escape(omit)}\b'
+        text = re.sub(pat, '', text)
+    text = text.strip()
 
-def normalize_token(token):
-    """Convert token to lowercase and lemmatize (noun mode); also converts 'vs' to 'v'."""
-    token = token.lower()
-    if token == "vs":
-        token = "v"
-    return lemmatizer.lemmatize(token, pos='n')
+    keyphrases = kw_model.extract_keywords(text, keyphrase_ngram_range=(1,4), stop_words='english', top_n=1)
+    if not keyphrases:
+        return ("general-other", "", "")
+    candidate = keyphrases[0][0].lower()
+    norm_candidate = normalize_phrase(candidate)
+    canon = canonicalize_phrase(norm_candidate)
+    if not canon:
+        return ("general-other", "", "")
+    tokens = [t for t in canon.split() if t.strip() != ""]
+    return pick_tags_pos_based(tokens, user_a_tags)
 
-def normalize_phrase(phrase):
-    """
-    Lowercase, tokenize, keep only alphanumeric tokens, and lemmatize.
-    E.g., 'Pella Windows Cost' becomes 'pella window cost'.
-    """
-    tokens = word_tokenize(phrase.lower())
-    return " ".join(normalize_token(t) for t in tokens if t.isalnum())
+# Define the rest of your helper functions
+# [...]
 
-# [ADD ALL OTHER HELPER FUNCTIONS HERE]
-
-###
-### 7. Main application UI code
-###
-
-# Sidebar with application description and mode selection
+# Main UI - add this to the bottom of the script
 with st.sidebar:
     st.title("Keyword Analysis Tool")
     st.markdown("""
@@ -97,21 +124,21 @@ with st.sidebar:
         help="Select what you want to do with your keywords"
     )
 
-# Main content area - customize based on selected mode
+# Main content area
 if mode == "Candidate Theme Extraction":
     st.title("🔍 Extract Keyword Themes")
     
-    # [CANDIDATE THEME EXTRACTION CODE HERE]
-    
+    # [Rest of the UI code for this mode]
+
 elif mode == "Full Tagging":
     st.title("🏷️ Tag Your Keywords")
     
-    # [FULL TAGGING CODE HERE]
-    
+    # [Rest of the UI code for this mode]
+
 elif mode == "Content Topic Clustering":
     st.title("📚 Generate Content Topics")
     
-    # [CONTENT TOPIC CLUSTERING CODE HERE]
+    # [Rest of the UI code for this mode]
 
 ###
 ### Main Application Function
