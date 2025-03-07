@@ -279,22 +279,28 @@ def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=3, simi
     if n_clusters <= 2:
         # Estimate a reasonable number of clusters - aim for 10-15 keywords per cluster
         cluster_size_target = min(15, max(8, min_shared_keywords * 2))
-        n_kmeans_clusters = max(3, min(50, len(keywords) // cluster_size_target))
         
-        kmeans = KMeans(n_clusters=n_kmeans_clusters, random_state=42, n_init=10)
-        kmeans_labels = kmeans.fit_predict(normalized_embeddings)
+        # Make sure n_kmeans_clusters doesn't exceed number of data points
+        n_kmeans_clusters = max(2, min(len(normalized_embeddings) - 1, len(keywords) // cluster_size_target))
         
-        # Use K-means result if it created multiple clusters
-        if len(set(kmeans_labels)) > 2:
-            cluster_labels = kmeans_labels
+        if n_kmeans_clusters <= 1:
+            # Not enough data for multiple clusters
+            cluster_labels = np.zeros(len(keywords), dtype=int)
         else:
-            # Last resort: hierarchical clustering with lower threshold
-            Z = linkage(normalized_embeddings, method='average', metric='cosine')
+            kmeans = KMeans(n_clusters=n_kmeans_clusters, random_state=42, n_init=10)
+            kmeans_labels = kmeans.fit_predict(normalized_embeddings)
             
-            # Try a more lenient threshold
-            relaxed_threshold = max(0.3, similarity_threshold * 0.7)  # Don't go below 0.3
-            distance_threshold = 1 - relaxed_threshold
-            cluster_labels = fcluster(Z, t=distance_threshold, criterion='distance') - 1
+            # Use K-means result if it created multiple clusters
+            if len(set(kmeans_labels)) > 2:
+                cluster_labels = kmeans_labels
+            else:
+                # Last resort: hierarchical clustering with lower threshold
+                Z = linkage(normalized_embeddings, method='average', metric='cosine')
+                
+                # Try a more lenient threshold
+                relaxed_threshold = max(0.3, similarity_threshold * 0.7)  # Don't go below 0.3
+                distance_threshold = 1 - relaxed_threshold
+                cluster_labels = fcluster(Z, t=distance_threshold, criterion='distance') - 1
     else:
         # DBSCAN gave good results, use those
         cluster_labels = dbscan_labels
@@ -305,7 +311,7 @@ def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=3, simi
         if cluster == -1:  # Skip outliers
             continue
             
-        if size > len(keywords) * 0.3:  # If cluster has >30% of all keywords
+        if size > len(keywords) * 0.3 and size > 5:  # If cluster has >30% of all keywords
             # Get indices of this large cluster
             cluster_indices = np.where(cluster_labels == cluster)[0]
             
@@ -313,16 +319,22 @@ def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=3, simi
             cluster_embeddings = normalized_embeddings[cluster_indices]
             
             # Force split into appropriate number of subclusters
-            n_subclusters = max(3, size // 15)  # Aim for ~15 keywords per subcluster
+            n_subclusters = max(2, min(size // 15, len(cluster_embeddings) - 1))
             
-            # Apply K-means to split
-            sub_kmeans = KMeans(n_clusters=n_subclusters, random_state=42, n_init=10)
-            sub_labels = sub_kmeans.fit_predict(cluster_embeddings)
-            
-            # Generate new cluster IDs - use max existing ID + 1, 2, 3...
-            max_id = np.max(cluster_labels)
-            for i, idx in enumerate(cluster_indices):
-                cluster_labels[idx] = max_id + 1 + sub_labels[i]
+            # Only attempt to split if we have enough data points
+            if n_subclusters >= 2 and len(cluster_embeddings) > n_subclusters:
+                try:
+                    # Apply K-means to split
+                    sub_kmeans = KMeans(n_clusters=n_subclusters, random_state=42, n_init=10)
+                    sub_labels = sub_kmeans.fit_predict(cluster_embeddings)
+                    
+                    # Generate new cluster IDs - use max existing ID + 1, 2, 3...
+                    max_id = np.max(cluster_labels)
+                    for i, idx in enumerate(cluster_indices):
+                        cluster_labels[idx] = max_id + 1 + sub_labels[i]
+                except Exception:
+                    # If splitting fails, leave this cluster as is
+                    pass
     
     # Calculate cluster centers and confidence scores
     unique_clusters = np.unique(cluster_labels)
@@ -333,13 +345,14 @@ def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=3, simi
         if cluster == -1:
             continue
         cluster_indices = np.where(cluster_labels == cluster)[0]
-        cluster_centers[cluster] = np.mean(normalized_embeddings[cluster_indices], axis=0)
+        if len(cluster_indices) > 0:  # Ensure we have points in this cluster
+            cluster_centers[cluster] = np.mean(normalized_embeddings[cluster_indices], axis=0)
     
     # Calculate confidence scores
     confidence_scores = np.full(len(keywords), 0.3)  # Base confidence for outliers
     
     for i, label in enumerate(cluster_labels):
-        if label == -1:
+        if label == -1 or label not in cluster_centers:
             continue
         
         center = cluster_centers[label]
