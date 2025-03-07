@@ -2181,7 +2181,7 @@ elif mode == "Full Tagging":
                     clustered_csv,
                     "semantic_intent_clusters.csv",
                     "text/csv",
-                    key="download_intent_clusters"
+                    key="download_intent_clusters_tagging"
                 )
 
 elif mode == "Content Topic Clustering":
