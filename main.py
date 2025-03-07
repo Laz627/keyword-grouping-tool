@@ -25,14 +25,23 @@ import openai
 from sentence_transformers import SentenceTransformer
 from sklearn.cluster import KMeans
 
-# Download NLTK resources
+# Download NLTK resources with extra error handling
 nltk.download('punkt', quiet=True)
 nltk.download('averaged_perceptron_tagger', quiet=True)
 nltk.download('wordnet', quiet=True)
 nltk.download('stopwords', quiet=True)
+
+# Add these extra downloads to fix the error
+try:
+    nltk.download('punkt', quiet=True)
+    # Ensure punkt is available for sentence tokenization
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    # If still missing, try downloading without quiet flag
+    nltk.download('punkt')
+
 from nltk.corpus import stopwords
 stop_words = set(stopwords.words('english'))
-
 lemmatizer = WordNetLemmatizer()
 
 # Load models on demand using session state
