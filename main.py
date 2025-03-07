@@ -2016,7 +2016,7 @@ elif mode == "Full Tagging":
                 st.subheader("Semantic Intent-Based Clustering Results")
                 
                 # Count clusters and outliers
-                total_keywords = len(df)
+                total_keywords = len(df_filtered)
                 total_clusters = len([k for k, v in cluster_info.items() if not v.get("is_outlier_cluster", False)])
                 total_outliers = len([k for k, v in cluster_info.items() if v.get("is_outlier_cluster", False)])
                 outlier_keywords = df[df["Is_Outlier"]].shape[0]
