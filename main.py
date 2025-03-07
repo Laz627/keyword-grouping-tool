@@ -168,7 +168,6 @@ def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=5, simi
     similarities = cosine_similarity(embeddings)
     
     # Convert to distance matrix (1 - similarity) and ensure non-negative values
-    # Cosine similarity can range from -1 to 1, so distances could be negative due to floating point errors
     distances = np.maximum(0, 1 - similarities)  # Ensure all distances are non-negative
     
     # Apply DBSCAN with min_samples=min_shared_keywords
@@ -176,21 +175,43 @@ def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=5, simi
     dbscan = DBSCAN(eps=eps, min_samples=min_shared_keywords, metric='precomputed')
     cluster_labels = dbscan.fit_predict(distances)
     
-    # Calculate confidence scores based on average similarity to cluster centroid
-    confidence_scores = np.ones(len(keywords))
+    # If all keywords are outliers (-1), try a more relaxed approach
+    if np.all(cluster_labels == -1):
+        # Try with lower min_samples
+        adjusted_min = max(2, min_shared_keywords // 2)
+        dbscan = DBSCAN(eps=eps, min_samples=adjusted_min, metric='precomputed')
+        cluster_labels = dbscan.fit_predict(distances)
+        
+        # If still all outliers, use KMeans as fallback
+        if np.all(cluster_labels == -1):
+            n_clusters = max(1, len(keywords) // 10)  # Approximate number of clusters
+            from sklearn.cluster import KMeans
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+            cluster_labels = kmeans.fit_predict(embeddings)
     
-    for i in range(len(keywords)):
-        # Skip outliers (cluster_label = -1)
-        if cluster_labels[i] == -1:
-            confidence_scores[i] = 0.3  # Base confidence for outliers
-            continue
+    # Calculate meaningful confidence scores based on distance to cluster center
+    confidence_scores = np.full(len(keywords), 0.4)  # Start with base confidence
+    
+    # For each cluster (excluding outliers)
+    for cluster_id in set(cluster_labels):
+        if cluster_id == -1:
+            continue  # Skip outliers
+            
+        # Get indices of keywords in this cluster
+        cluster_indices = np.where(cluster_labels == cluster_id)[0]
         
-        # Get all keywords in the same cluster
-        cluster_indices = np.where(cluster_labels == cluster_labels[i])[0]
+        # Calculate cluster centroid
+        centroid = embeddings[cluster_indices].mean(axis=0)
         
-        # Calculate average similarity to other cluster members
-        similarities_to_cluster = similarities[i, cluster_indices].mean()
-        confidence_scores[i] = similarities_to_cluster
+        # Calculate cosine similarity to centroid for each keyword in cluster
+        for idx in cluster_indices:
+            keyword_embedding = embeddings[idx]
+            # Normalize vectors for cosine similarity
+            norm_centroid = centroid / np.linalg.norm(centroid)
+            norm_keyword = keyword_embedding / np.linalg.norm(keyword_embedding)
+            similarity = np.dot(norm_centroid, norm_keyword)
+            # Convert to confidence score (0.4 to 1.0 range)
+            confidence_scores[idx] = 0.4 + (similarity * 0.6)
     
     return cluster_labels, confidence_scores
 
@@ -1338,17 +1359,17 @@ elif mode == "Full Tagging":
             # Controls for intent-based clustering
             min_shared_keywords = st.slider(
                 "Min keywords per cluster", 
-                min_value=3, 
+                min_value=2, 
                 max_value=15, 
-                value=5,
+                value=3,  # Lower default from 5 to 3
                 help="Minimum number of keywords required to form a cluster"
             )
             
             similarity_threshold = st.slider(
                 "Similarity threshold", 
                 min_value=0.4, 
-                max_value=0.9, 
-                value=0.65, 
+                max_value=0.95, 
+                value=0.75,  # Higher default from 0.65 to 0.75
                 step=0.05,
                 help="How similar keywords must be to cluster together (higher = more similar)"
             )
@@ -1565,17 +1586,17 @@ elif mode == "Content Topic Clustering":
                 # Intent-based clustering parameters
                 min_shared_keywords = st.slider(
                     "Min keywords per cluster", 
-                    min_value=3, 
+                    min_value=2, 
                     max_value=15, 
-                    value=5,
+                    value=3,  # Lower default from 5 to 3
                     help="Minimum number of keywords required to form a cluster"
                 )
                 
                 similarity_threshold = st.slider(
                     "Similarity threshold", 
                     min_value=0.4, 
-                    max_value=0.9, 
-                    value=0.65, 
+                    max_value=0.95, 
+                    value=0.75,  # Higher default from 0.65 to 0.75
                     step=0.05,
                     help="How similar keywords must be to cluster together (higher = more similar)"
                 )
