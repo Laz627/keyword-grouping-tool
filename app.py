@@ -1,4 +1,4 @@
-# app.py - This is your entry point for streamlit run
+# app.py - Entry point for the streamlit app
 import streamlit as st
 
 # Set page config as the FIRST Streamlit command
@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 # Import your main logic
-import main_logic
+import main
 
 # Run the app
-main_logic.run_app()
+main.run_app()
