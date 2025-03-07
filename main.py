@@ -903,6 +903,71 @@ def generate_basic_topics(keywords, a_tags, b_tags):
     
     return topic_ideas, expanded_ideas, value_props
 
+def estimate_gpt4o_mini_costs(num_clusters, use_gpt_descriptors=True, use_gpt_topics=True):
+    """
+    Estimate costs for using GPT-4o-mini for cluster analysis
+    
+    Parameters:
+    -----------
+    num_clusters : int
+        Number of clusters to analyze
+    use_gpt_descriptors : bool
+        Whether GPT will be used for cluster naming/descriptions
+    use_gpt_topics : bool
+        Whether GPT will be used for topic generation
+    
+    Returns:
+    --------
+    total_cost : float
+        Estimated cost in USD
+    breakdown : dict
+        Breakdown of costs by component
+    """
+    # GPT-4o-mini pricing (per 1K tokens)
+    INPUT_PRICE = 0.00015  # $0.00015 per 1K input tokens
+    OUTPUT_PRICE = 0.0006  # $0.0006 per 1K output tokens
+    
+    # Initialize cost components
+    descriptor_cost = 0
+    topic_cost = 0
+    analysis_cost = 0
+    
+    # Estimate for cluster descriptors (if enabled)
+    if use_gpt_descriptors:
+        # ~300 tokens input per cluster (prompt + sample keywords + tags)
+        descriptor_input_tokens = num_clusters * 300
+        # ~10 tokens output per cluster (short descriptive phrase)
+        descriptor_output_tokens = num_clusters * 10
+        
+        descriptor_cost = (descriptor_input_tokens * INPUT_PRICE / 1000) + \
+                         (descriptor_output_tokens * OUTPUT_PRICE / 1000)
+    
+    # Estimate for topic generation (if enabled)
+    if use_gpt_topics:
+        # ~600 tokens input per cluster (longer prompt with samples, tags, instructions)
+        topic_input_tokens = num_clusters * 600
+        # ~250 tokens output per cluster (5 topics with descriptions)
+        topic_output_tokens = num_clusters * 250
+        
+        topic_cost = (topic_input_tokens * INPUT_PRICE / 1000) + \
+                    (topic_output_tokens * OUTPUT_PRICE / 1000)
+    
+    # Add cost for overall content strategy (a single analysis)
+    analysis_input_tokens = 600  # Strategy prompt with top topics
+    analysis_output_tokens = 800  # Strategy recommendations
+    analysis_cost = (analysis_input_tokens * INPUT_PRICE / 1000) + \
+                   (analysis_output_tokens * OUTPUT_PRICE / 1000)
+    
+    # Calculate total cost
+    total_cost = descriptor_cost + topic_cost + analysis_cost
+    
+    # Return breakdown
+    return total_cost, {
+        "cluster_descriptors": descriptor_cost,
+        "topic_generation": topic_cost,
+        "content_strategy": analysis_cost
+    }
+
 # Main UI
 with st.sidebar:
     st.title("Keyword Analysis Tool")
@@ -1294,6 +1359,20 @@ elif mode == "Full Tagging":
             estimated_cost = num_keywords * 0.0001 / 1000
             st.info(f"💰 Estimated OpenAI embedding cost: ${estimated_cost:.5f} for {num_keywords} keywords")
 
+        # Display cost information for GPT usage
+        if use_gpt and api_key:
+            # Estimate number of clusters
+            est_num_clusters = len(df["A:Tag"].unique()) * 3  # Rough estimate: ~3 clusters per A:Tag
+            total_cost, cost_breakdown = estimate_gpt4o_mini_costs(est_num_clusters, use_gpt_descriptors=True)
+    
+            st.info(f"""
+            💰 **Estimated GPT-4o-mini cost:** ${total_cost:.4f}
+            - Cluster naming: ${cost_breakdown['cluster_descriptors']:.4f}
+            - Content strategy: ${cost_breakdown['content_strategy']:.4f}
+    
+            *Note: Actual costs may vary depending on the number of clusters formed*
+            """)
+
         if st.button("Generate Intent-Based Clusters", key="generate_intent_clusters"):
             with st.spinner("Analyzing keyword patterns with semantic intent-based clustering..."):
                 # Get models
@@ -1529,6 +1608,26 @@ elif mode == "Content Topic Clustering":
                 num_keywords = len(filtered_df)
                 estimated_cost = num_keywords * 0.0001 / 1000
                 st.info(f"💰 Estimated OpenAI embedding cost: ${estimated_cost:.5f} for {num_keywords} keywords")
+
+            # Display cost information for GPT usage
+            if use_gpt_for_topics and api_key:
+                # Filter dataset if needed
+                filtered_df = df
+                if selected_a_tags:
+                    filtered_df = df[df["A:Tag"].isin(selected_a_tags)]
+                
+                # Estimate number of clusters
+                est_num_clusters = len(filtered_df["A:Tag"].unique()) * 3  # Rough estimate: ~3 clusters per A:Tag
+                total_cost, cost_breakdown = estimate_gpt4o_mini_costs(est_num_clusters, use_gpt_descriptors=True, use_gpt_topics=True)
+                
+                st.info(f"""
+                💰 **Estimated GPT-4o-mini cost:** ${total_cost:.4f}
+                - Cluster naming: ${cost_breakdown['cluster_descriptors']:.4f}
+                - Topic generation: ${cost_breakdown['topic_generation']:.4f}
+                - Content strategy: ${cost_breakdown['content_strategy']:.4f}
+                
+                *Note: Actual costs may vary depending on the number of clusters formed*
+                """)
             
             # Run clustering
             if st.button("Generate Content Topics", key="generate_topics_button"):
