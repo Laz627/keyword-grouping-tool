@@ -56,14 +56,75 @@ def get_models():
     if 'models_loaded' not in st.session_state:
         with st.spinner("Loading NLP models... (this might take a moment)"):
             try:
-                # Load models into session state
+                # Try to load models into session state
                 st.session_state.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
                 st.session_state.kw_model = KeyBERT(model=st.session_state.embedding_model)
                 st.session_state.models_loaded = True
             except Exception as e:
                 st.error(f"Error loading models: {e}")
-                st.session_state.models_loaded = False
-                st.stop()
+                
+                # Use a simplified fallback approach
+                try:
+                    # Create a basic embedding model using TF-IDF as fallback
+                    from sklearn.feature_extraction.text import TfidfVectorizer
+                    from sklearn.metrics.pairwise import cosine_similarity
+                    
+                    class SimpleSentenceTransformer:
+                        def __init__(self):
+                            self.vectorizer = TfidfVectorizer()
+                            self.fitted = False
+                            
+                        def encode(self, sentences, **kwargs):
+                            if not isinstance(sentences, list):
+                                sentences = [sentences]
+                            
+                            if not self.fitted:
+                                vectors = self.vectorizer.fit_transform(sentences).toarray()
+                                self.fitted = True
+                            else:
+                                vectors = self.vectorizer.transform(sentences).toarray()
+                            return vectors
+                    
+                    class SimpleKeyBERT:
+                        def __init__(self, model=None):
+                            self.vectorizer = TfidfVectorizer(ngram_range=(1, 2))
+                        
+                        def extract_keywords(self, doc, keyphrase_ngram_range=(1, 1), stop_words=None, top_n=5, **kwargs):
+                            # Simple extraction using TF-IDF
+                            from sklearn.feature_extraction.text import CountVectorizer
+                            import numpy as np
+                            
+                            # Extract candidate words/phrases
+                            count = CountVectorizer(ngram_range=keyphrase_ngram_range, stop_words=stop_words).fit([doc])
+                            candidates = count.get_feature_names_out()
+                            
+                            # Get TFIDF scores for candidates
+                            doc_vectorizer = TfidfVectorizer(vocabulary=candidates)
+                            doc_tfidf = doc_vectorizer.fit_transform([doc])
+                            
+                            # Get top candidates based on scores
+                            word_idx = np.argsort(doc_tfidf.toarray()[0])[-top_n:]
+                            scores = doc_tfidf.toarray()[0][word_idx]
+                            
+                            # Sort in descending order of scores
+                            word_idx = word_idx[::-1]
+                            scores = scores[::-1]
+                            
+                            # Get candidate names
+                            words = [count.get_feature_names_out()[i] for i in word_idx]
+                            
+                            # Return results in KeyBERT's expected format
+                            return [(words[i], scores[i]) for i in range(len(words))]
+                    
+                    st.session_state.embedding_model = SimpleSentenceTransformer()
+                    st.session_state.kw_model = SimpleKeyBERT()
+                    st.session_state.models_loaded = True
+                    st.warning("Using simplified models with reduced functionality due to PyTorch issues")
+                    
+                except Exception as e2:
+                    st.error(f"Failed to create fallback models: {e2}")
+                    st.session_state.models_loaded = False
+                    st.stop()
     
     return st.session_state.embedding_model, st.session_state.kw_model
 
@@ -636,46 +697,62 @@ def create_two_stage_visualization(df_clustered, cluster_info, cluster_descripto
         "Is_Outlier": is_outlier
     })
     
-    # Create plot
+    # Create plot - using a simpler approach to avoid hatching issues
     fig, ax = plt.subplots(figsize=(12, 8))
     
-    # Use a grouped bar chart
-    pivot_df = plot_df.pivot_table(
+    # Group by A_Tag
+    grouped = plot_df.pivot_table(
         index="A_Tag", columns="Cluster", values="Count", fill_value=0
     )
     
-    # Identify outlier columns
-    outlier_columns = [col for i, col in enumerate(pivot_df.columns) 
-                      if plot_df[plot_df["Cluster"] == col]["Is_Outlier"].iloc[0]]
+    # Plot the regular clusters (non-outliers)
+    regular_clusters = [c for c in plot_df["Cluster"].unique() 
+                      if not plot_df[plot_df["Cluster"] == c]["Is_Outlier"].any()]
+    outlier_clusters = [c for c in plot_df["Cluster"].unique() 
+                       if plot_df[plot_df["Cluster"] == c]["Is_Outlier"].any()]
     
-    # Plot regular clusters first
-    regular_pivot = pivot_df.drop(columns=outlier_columns) if outlier_columns else pivot_df
-    regular_pivot.plot(kind="bar", stacked=True, ax=ax, colormap="tab20")
+    if regular_clusters:
+        regular_data = grouped[regular_clusters]
+        regular_data.plot(kind="bar", stacked=True, ax=ax, colormap="tab20", alpha=0.7)
     
-    # Plot outlier clusters with hatched pattern if they exist
-    if outlier_columns:
-        outlier_pivot = pivot_df[outlier_columns]
-        bottoms = regular_pivot.sum(axis=1)
-        for i, col in enumerate(outlier_pivot.columns):
-            outlier_pivot[col].plot(kind="bar", stacked=True, ax=ax, 
-                                   bottom=bottoms, color="lightgrey", 
-                                   hatch="///", alpha=0.7)
+    # Add a special bar for outlier clusters if they exist
+    if outlier_clusters:
+        # Get the count data for outlier clusters
+        outlier_data = grouped[outlier_clusters].sum(axis=1)
+        
+        # Calculate the positions where these bars should start (on top of the regular bars)
+        if regular_clusters:
+            bottom = regular_data.sum(axis=1)
+        else:
+            bottom = pd.Series(0, index=grouped.index)
+        
+        # Add visual representation of outlier clusters
+        outlier_bars = ax.bar(
+            range(len(grouped)), 
+            outlier_data,
+            bottom=bottom,
+            color='lightgrey',
+            alpha=0.7,
+            label="Miscellaneous Keywords"
+        )
     
     ax.set_title("Keyword Distribution by A:Tag and Cluster")
     ax.set_xlabel("A:Tag")
     ax.set_ylabel("Number of Keywords")
     
-    # Create a legend including both regular and outlier clusters
+    # Add a note about miscellaneous keywords
+    if outlier_clusters:
+        ax.text(
+            0.5, 0.95, 
+            "Light grey sections represent miscellaneous keywords that didn't fit well in other clusters",
+            transform=ax.transAxes,
+            ha='center',
+            fontsize=9,
+            bbox=dict(facecolor='white', alpha=0.7)
+        )
+    
+    # Customize legend
     handles, labels = ax.get_legend_handles_labels()
-    
-    # Format the legend labels to clearly indicate outlier clusters
-    for i, label in enumerate(labels):
-        if label in outlier_columns:
-            handles[i].set_hatch("///")
-            handles[i].set_alpha(0.7)
-            handles[i].set_facecolor("lightgrey")
-            labels[i] = f"{label} (Miscellaneous)"
-    
     ax.legend(handles, labels, title="Clusters", bbox_to_anchor=(1.05, 1), loc='upper left')
     
     plt.tight_layout()
