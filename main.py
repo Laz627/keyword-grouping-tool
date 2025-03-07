@@ -1988,11 +1988,14 @@ elif mode == "Full Tagging":
                 else:
                     df_filtered = df.copy()
                 
+                # Create a completely separate dataframe for results - don't modify original df at all
+                working_df = df_filtered.copy()
+                
                 # Use the enhanced two-stage clustering with improved parameter values
                 st.text("Processing clusters... this might take a few minutes for large datasets")
                 df_clustered, cluster_info = two_stage_clustering(
-                    df_filtered, 
-                    cluster_method=clustering_method,  # Use the new variable name
+                    working_df, 
+                    cluster_method=clustering_method,
                     embedding_model=embedding_model,
                     api_key=api_key,
                     use_openai_embeddings=use_openai_embeddings,
@@ -2004,32 +2007,35 @@ elif mode == "Full Tagging":
                 use_gpt_descriptors = use_gpt and api_key
                 cluster_descriptors = generate_cluster_descriptors(cluster_info, use_gpt_descriptors, api_key)
                 
-                # Add cluster assignments only to the filtered dataframe (don't mix A-tags)
-                df_filtered["Cluster"] = df_clustered["Cluster"]
-                df_filtered["A_Group"] = df_clustered["A_Group"]
-                df_filtered["Subcluster"] = df_clustered["Subcluster"]
-                df_filtered["Cluster_Label"] = df_filtered["Cluster"].map(cluster_descriptors)
-                df_filtered["Cluster_Confidence"] = df_clustered["Cluster_Confidence"]
-                df_filtered["Is_Outlier"] = df_clustered["Is_Outlier"]
+                # Add cluster assignments to the working dataframe ONLY
+                results_df = working_df.copy()
+                results_df["Cluster"] = df_clustered["Cluster"] 
+                results_df["A_Group"] = df_clustered["A_Group"]
+                results_df["Subcluster"] = df_clustered["Subcluster"]
+                results_df["Cluster_Label"] = results_df["Cluster"].map(cluster_descriptors)
+                results_df["Cluster_Confidence"] = df_clustered["Cluster_Confidence"]
+                results_df["Is_Outlier"] = df_clustered["Is_Outlier"]
                 
-                # Use the filtered dataframe for display but don't modify the original df
-                df_display = df_filtered.copy()
+                # Add quality indicator
+                results_df["Cluster_Quality"] = results_df["Cluster_Confidence"].apply(
+                    lambda x: "High" if x >= 0.8 else ("Medium" if x >= 0.6 else "Low")
+                )
                 
                 # Show overview of clusters
                 st.subheader("Semantic Intent-Based Clustering Results")
                 
                 # Count clusters and outliers
-                total_keywords = len(df_filtered)
+                total_keywords = len(results_df)
                 total_clusters = len([k for k, v in cluster_info.items() if not v.get("is_outlier_cluster", False)])
                 total_outliers = len([k for k, v in cluster_info.items() if v.get("is_outlier_cluster", False)])
                 
-                # Fixed line - handle Is_Outlier column properly
-                if "Is_Outlier" in df_filtered.columns:
-                    df_filtered["Is_Outlier"] = df_filtered["Is_Outlier"].fillna(False)
-                    outlier_keywords = df_filtered[df_filtered["Is_Outlier"]].shape[0]
+                # Handle outlier information safely
+                if "Is_Outlier" in results_df.columns:
+                    results_df["Is_Outlier"] = results_df["Is_Outlier"].fillna(False)
+                    outlier_keywords = results_df[results_df["Is_Outlier"]].shape[0]
                 else:
                     outlier_keywords = 0
-                    
+                
                 outlier_percent = (outlier_keywords / total_keywords) * 100 if total_keywords > 0 else 0
                 
                 # Show summary statistics
@@ -2043,14 +2049,16 @@ elif mode == "Full Tagging":
                 
                 # Visualization of A tag groups and their clusters
                 st.subheader("Keyword Cluster Distribution")
-                fig = create_two_stage_visualization(df_clustered, cluster_info, cluster_descriptors)
+                fig = create_two_stage_visualization(results_df, cluster_info, cluster_descriptors)
                 st.pyplot(fig)
                 
+                # Get a_tags directly from cluster_info to avoid any mixing
+                a_tags = sorted(set(info["a_tag"] for info in cluster_info.values()))
+                
+                # Show clusters with their properties
                 st.markdown("### Intent-Based Clusters by A:Tag")
                 
-                # Group clusters by A tag for organized display
-                a_tags = sorted([str(x) for x in df_filtered["A_Group"].dropna().unique()])
-                
+                # Use cluster_info to iterate through clusters
                 for a_tag in a_tags:
                     with st.expander(f"A:Tag: {a_tag}"):
                         # Get clusters for this A tag
@@ -2080,7 +2088,7 @@ elif mode == "Full Tagging":
                                 st.markdown(f"**C:Tags:** {', '.join(info['c_tags'])}")
                             
                             # Get cluster dataframe
-                            cluster_df = df[df["Cluster"] == cluster_id]
+                            cluster_df = results_df[results_df["Cluster"] == cluster_id]
                             
                             # Get high confidence keywords
                             high_conf_kws = cluster_df[cluster_df["Cluster_Confidence"] >= 0.7]
@@ -2099,12 +2107,7 @@ elif mode == "Full Tagging":
                             st.markdown("---")
                 
                 # Download button for clustered keywords
-                # Add additional columns to indicate quality of the clustering
-                df["Cluster_Quality"] = df["Cluster_Confidence"].apply(
-                    lambda x: "High" if x >= 0.8 else ("Medium" if x >= 0.6 else "Low")
-                )
-                
-                clustered_csv = df.to_csv(index=False).encode("utf-8")
+                clustered_csv = results_df.to_csv(index=False).encode("utf-8")
                 st.download_button(
                     "Download Intent-Based Clusters",
                     clustered_csv,
