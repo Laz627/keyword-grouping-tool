@@ -2356,20 +2356,16 @@ elif mode == "Content Topic Clustering":
                         # Use more aggressive min_shared_keywords to create fewer clusters
                         adaptive_min_shared = min(10, max(5, int(len(df_filtered) / 100)))
                         
-                        try:
-                            with timeout(600):  # 10 minute timeout
-                                df_clustered, cluster_info = two_stage_clustering(
-                                    df_filtered, 
-                                    cluster_method=clustering_approach,
-                                    embedding_model=embedding_model,
-                                    api_key=api_key,
-                                    use_openai_embeddings=use_openai_embeddings,
-                                    min_shared_keywords=adaptive_min_shared,  # Adaptive value
-                                    similarity_threshold=similarity_threshold  # Will be auto-adjusted if needed
-                                )
-                        except TimeoutError:
-                            st.error("Clustering timed out. Try using fewer keywords or more aggressive clustering settings.")
-                            st.stop()
+                        st.text("Processing clusters... this might take a few minutes for large datasets")
+                        df_clustered, cluster_info = two_stage_clustering(
+                            df_filtered, 
+                            cluster_method=clustering_approach,
+                            embedding_model=embedding_model,
+                            api_key=api_key,
+                            use_openai_embeddings=use_openai_embeddings,
+                            min_shared_keywords=min_shared_keywords,
+                            similarity_threshold=similarity_threshold
+                        )
                             
                         # Generate cluster labels with batching
                         use_gpt_descriptors = use_gpt and api_key
