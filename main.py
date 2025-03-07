@@ -367,9 +367,11 @@ def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=3, simi
 # NEW FUNCTION: Completely rewritten clustering with strict A-tag separation
 def semantic_intent_clustering_with_strict_atag_separation(df, cluster_method="Tag-based", embedding_model=None, 
                                                            api_key=None, use_openai_embeddings=False, 
-                                                           min_shared_keywords=3, similarity_threshold=0.65):
+                                                           min_shared_keywords=3, similarity_threshold=0.65,
+                                                           max_cluster_size=50):
     """
     Completely rewritten clustering function that guarantees A-tags are never mixed
+    with improved granularity to create more clusters
     """
     # Start with an empty results DataFrame
     result_df = pd.DataFrame()
@@ -481,44 +483,97 @@ def semantic_intent_clustering_with_strict_atag_separation(df, cluster_method="T
             if len(group) < min_shared_keywords * 2:
                 labels = np.zeros(len(group), dtype=int)
                 confidence = np.ones(len(group))
+                is_outlier = np.zeros(len(group), dtype=bool)
             else:
-                # Apply DBSCAN first
+                # IMPORTANT: Normalize embeddings for better distance calculation
+                normalized_features = feature_matrix.copy()
+                for i in range(len(normalized_features)):
+                    norm = np.linalg.norm(normalized_features[i])
+                    if norm > 0:
+                        normalized_features[i] = normalized_features[i] / norm
+                
+                # Try DBSCAN for initial clustering with higher granularity
                 eps = 1 - similarity_threshold  # Convert similarity to distance
-                dbscan = DBSCAN(eps=eps, min_samples=min_shared_keywords, metric='cosine')
-                labels = dbscan.fit_predict(feature_matrix)
+                
+                # NEW: Adjust min_samples based on group size to create more clusters
+                adaptive_min_samples = min(min_shared_keywords, max(2, len(group) // 100))
+                
+                dbscan = DBSCAN(eps=eps, min_samples=adaptive_min_samples, metric='cosine')
+                labels = dbscan.fit_predict(normalized_features)
                 
                 # Count meaningful clusters (excluding -1 outliers)
-                n_clusters = len(set(labels) - {-1}) 
+                n_clusters = len(set(labels) - {-1})
                 
-                # If DBSCAN found no good clusters, try K-means
-                if n_clusters == 0:
-                    # Reasonable number of clusters based on group size
-                    n_clusters = max(1, min(len(group) // min_shared_keywords, 5))
-                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                    labels = kmeans.fit_predict(feature_matrix)
+                # If DBSCAN found no good clusters or too few clusters, try K-means
+                if n_clusters <= 1 or (len(group) > 100 and n_clusters < 3):
+                    # NEW: More aggressive cluster count estimation - create more granular clusters
+                    if len(group) <= 50:
+                        n_clusters = max(2, len(group) // 15)
+                    elif len(group) <= 200:
+                        n_clusters = max(5, len(group) // 20)
+                    else:
+                        n_clusters = max(10, len(group) // 25)
                     
+                    # Make sure we don't create more clusters than we have samples
+                    n_clusters = min(n_clusters, len(group) - 1)
+                    
+                    if n_clusters >= 2:
+                        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                        kmeans_labels = kmeans.fit_predict(normalized_features)
+                        labels = kmeans_labels
+                        is_outlier = np.zeros(len(group), dtype=bool)
+                    else:
+                        labels = np.zeros(len(group), dtype=int)
+                        is_outlier = np.zeros(len(group), dtype=bool)
+                else:
+                    # Mark outliers from DBSCAN
+                    is_outlier = (labels == -1)
+                
+                # NEW: Check if any cluster is too large and needs splitting
+                unique_labels, counts = np.unique(labels, return_counts=True)
+                
+                # Skip -1 (outliers) when checking for large clusters
+                for label, count in zip(unique_labels, counts):
+                    if label != -1 and count > max_cluster_size:
+                        # This cluster is too large, split it further
+                        cluster_indices = np.where(labels == label)[0]
+                        cluster_features = normalized_features[cluster_indices]
+                        
+                        # Determine appropriate number of subclusters
+                        n_subclusters = max(2, count // (max_cluster_size // 2))
+                        n_subclusters = min(n_subclusters, len(cluster_indices) - 1)
+                        
+                        if n_subclusters >= 2:
+                            # Use KMeans for more predictable splitting
+                            sub_kmeans = KMeans(n_clusters=n_subclusters, random_state=42, n_init=10)
+                            sub_labels = sub_kmeans.fit_predict(cluster_features)
+                            
+                            # Find the maximum existing label
+                            max_label = np.max(labels)
+                            
+                            # Assign new labels to the split clusters
+                            for i, idx in enumerate(cluster_indices):
+                                labels[idx] = max_label + 1 + sub_labels[i]
+                
                 # Calculate confidence scores
                 confidence = np.ones(len(group)) * 0.7  # Default confidence
                 
-                # Mark outliers from DBSCAN
-                is_outlier = (labels == -1)
-                
-                # Enhance confidence for non-outliers
-                if n_clusters > 0:
-                    # Calculate cluster centers
+                # If we have clusters, calculate confidence based on distance to cluster center
+                if len(set(labels)) > 1 or (len(set(labels)) == 1 and -1 not in labels):
+                    # Calculate cluster centers (excluding outliers)
                     centers = {}
-                    for label in set(labels) - {-1}:
+                    for label in set(labels) - {-1} if -1 in labels else set(labels):
                         mask = (labels == label)
-                        centers[label] = np.mean(feature_matrix[mask], axis=0)
+                        if np.any(mask):  # Ensure we have points in this cluster
+                            centers[label] = np.mean(normalized_features[mask], axis=0)
                     
                     # Calculate similarities to centers
-                    for i, (label, vec) in enumerate(zip(labels, feature_matrix)):
-                        if label != -1:
+                    for i, (label, vec) in enumerate(zip(labels, normalized_features)):
+                        if label != -1 and label in centers:
                             center = centers[label]
-                            # Normalize vectors for cosine similarity
-                            norm_vec = vec / np.linalg.norm(vec) if np.linalg.norm(vec) > 0 else vec
+                            # Normalize center vector for cosine similarity
                             norm_center = center / np.linalg.norm(center) if np.linalg.norm(center) > 0 else center
-                            sim = np.dot(norm_vec, norm_center)
+                            sim = np.dot(vec, norm_center)
                             confidence[i] = 0.6 + (sim * 0.4)  # Scale to 0.6-1.0 range
         except Exception as e:
             # If clustering fails, put everything in one cluster
@@ -529,13 +584,13 @@ def semantic_intent_clustering_with_strict_atag_separation(df, cluster_method="T
         # Assign subclusters within this A-tag group
         group["Subcluster"] = labels
         group["Cluster_Confidence"] = confidence
-        group["Is_Outlier"] = (labels == -1)
+        group["Is_Outlier"] = is_outlier
         
         # Map to global cluster IDs ensuring complete separation by A-tag
         subcluster_map = {}
         
         # First handle regular subclusters
-        for subcluster in sorted(set(labels) - {-1}):
+        for subcluster in sorted(set(labels) - {-1} if -1 in labels else set(labels)):
             subcluster_map[subcluster] = global_cluster_id
             
             # Get keywords for this subcluster
