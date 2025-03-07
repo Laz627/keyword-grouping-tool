@@ -2012,8 +2012,8 @@ elif mode == "Full Tagging":
                 df_filtered["Cluster_Confidence"] = df_clustered["Cluster_Confidence"]
                 df_filtered["Is_Outlier"] = df_clustered["Is_Outlier"]
                 
-                # Use the filtered dataframe for all subsequent operations
-                df = df_filtered  # Replace the original df with filtered df
+                # Use the filtered dataframe for display but don't modify the original df
+                df_display = df_filtered.copy()
                 
                 # Show overview of clusters
                 st.subheader("Semantic Intent-Based Clustering Results")
@@ -2049,7 +2049,7 @@ elif mode == "Full Tagging":
                 st.markdown("### Intent-Based Clusters by A:Tag")
                 
                 # Group clusters by A tag for organized display
-                a_tags = sorted(df_filtered["A_Group"].unique())  # Changed from A_Group to A:Tag
+                a_tags = sorted([str(x) for x in df_filtered["A_Group"].dropna().unique()])
                 
                 for a_tag in a_tags:
                     with st.expander(f"A:Tag: {a_tag}"):
