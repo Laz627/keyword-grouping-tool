@@ -62,28 +62,22 @@ def get_models():
     return st.session_state.embedding_model, st.session_state.kw_model
 
 # Helper Functions for Tagging
-def normalize_token(token):
-    """Convert token to lowercase and lemmatize (noun mode); also converts 'vs' to 'v'."""
-    token = token.lower()
-    if token == "vs":
-        token = "v"
-    return lemmatizer.lemmatize(token, pos='n')
-
 def normalize_phrase(phrase):
     """
     Lowercase, tokenize, keep only alphanumeric tokens, and lemmatize.
     E.g., 'Pella Windows Cost' becomes 'pella window cost'.
     """
-    tokens = word_tokenize(phrase.lower())
+    # Simple tokenization by whitespace instead of using word_tokenize
+    tokens = [t.strip('.,;:!?()[]{}"\'') for t in phrase.lower().split()]
     return " ".join(normalize_token(t) for t in tokens if t.isalnum())
 
 def canonicalize_phrase(phrase):
     """
     Remove unwanted tokens (e.g., "series") while preserving the original order.
-    Also replace underscores with spaces so that tokens like "sash_replacement"
-    become "sash replacement". E.g., 'pella 350 series' becomes 'pella 350'.
+    Also replace underscores with spaces.
     """
-    tokens = word_tokenize(phrase.lower())
+    # Simple tokenization by whitespace instead of using word_tokenize
+    tokens = [t.strip('.,;:!?()[]{}"\'') for t in phrase.lower().split()]
     norm = [normalize_token(t) for t in tokens if t.isalnum() and normalize_token(t) != "series"]
     return " ".join(norm).replace("_", " ")
 
@@ -91,16 +85,7 @@ def pick_tags_pos_based(tokens, user_a_tags):
     """
     Given a list of candidate tokens (in original order), assign one-word tags for A, B, and C.
     
-    1. A:Tag  
-       - Flatten the token list (splitting on whitespace) and search for one that "contains"
-         an allowed A:Tag. If found, remove that token and set A:Tag to that allowed value.
-       - Otherwise, A:Tag becomes "general-other".
-    
-    2. B:Tag and C:Tag  
-       - From the remaining tokens, filter out stopwords.
-       - If at least two tokens remain, assign B:Tag = first token and C:Tag = second token.
-         Then use POS tagging: if the first token is not an adjective/gerund but the second is, swap them.
-       - If only one token remains, assign it to B:Tag and leave C:Tag blank.
+    Simplified version that doesn't depend on NLTK's POS tagging
     """
     # Flatten tokens (in case any token contains embedded whitespace)
     flat_tokens = []
@@ -129,11 +114,8 @@ def pick_tags_pos_based(tokens, user_a_tags):
 
     if len(filtered) >= 2:
         b_tag, c_tag = filtered[0], filtered[1]
-        pos_tags = pos_tag([b_tag, c_tag])
-        # Swap tokens if the first is not an adjective/gerund but the second is.
-        if not (pos_tags[0][1].startswith("JJ") or pos_tags[0][1] == "VBG") and \
-           (pos_tags[1][1].startswith("JJ") or pos_tags[1][1] == "VBG"):
-            b_tag, c_tag = c_tag, b_tag
+        # Simplified - don't rely on POS tagging
+        # Just use the order of tokens
     elif len(filtered) == 1:
         b_tag = filtered[0]
         c_tag = ""
