@@ -256,6 +256,199 @@ def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
     df[other_col] = new_o_col
     return df
 
+# NEW FUNCTION: Two-Stage Clustering
+def two_stage_clustering(df, num_clusters, cluster_method="Tag-based", embedding_model=None):
+    """
+    Perform two-stage clustering:
+    1. Group by A tag
+    2. Within each A tag group, cluster by B and C tags
+    
+    Parameters:
+    -----------
+    df : DataFrame
+        DataFrame containing Keywords, A:Tag, B:Tag, C:Tag columns
+    num_clusters : int
+        Maximum number of clusters to create within each A tag group
+    cluster_method : str
+        Method for clustering within A tag groups: "Tag-based", "Semantic", "Hybrid"
+    embedding_model : SentenceTransformer model
+        Model for generating embeddings (required for semantic and hybrid methods)
+        
+    Returns:
+    --------
+    clustered_df : DataFrame
+        Original DataFrame with additional columns
+    cluster_info : dict
+        Dictionary with information about each cluster
+    """
+    # Step 1: Group by A tag
+    a_tag_groups = df.groupby("A:Tag")
+    
+    # Prepare the clustered dataframe
+    clustered_df = pd.DataFrame()
+    
+    # Store cluster information
+    cluster_info = {}
+    global_cluster_id = 0
+    
+    # Process each A tag group
+    for a_tag, group_df in a_tag_groups:
+        group_size = len(group_df)
+        
+        # Skip empty groups
+        if group_size == 0:
+            continue
+            
+        # Determine number of clusters for this group
+        # Adaptive based on group size - smaller groups get fewer clusters
+        if group_size < 5:
+            # Very small groups don't need clustering
+            n_clusters = 1
+        else:
+            # Scale clusters based on group size, with a maximum of num_clusters
+            n_clusters = min(num_clusters, max(1, group_size // 5))
+        
+        # Create a copy of the group with index reset
+        group_df = group_df.copy().reset_index(drop=True)
+        
+        # Add A_Group column
+        group_df["A_Group"] = a_tag
+        
+        # Handle clustering within this A tag group
+        if group_size <= n_clusters:
+            # Not enough samples to cluster meaningfully
+            group_df["Subcluster"] = 0
+        else:
+            # Enough samples to cluster - generate features based on selected method
+            if cluster_method == "Tag-based":
+                # Use only B and C tags for clustering within A tag groups
+                b_dummies = pd.get_dummies(group_df["B:Tag"], prefix="B")
+                c_dummies = pd.get_dummies(group_df["C:Tag"], prefix="C")
+                
+                # Handle empty dummies case
+                if b_dummies.empty and c_dummies.empty:
+                    group_df["Subcluster"] = 0
+                elif b_dummies.empty:
+                    features = c_dummies
+                elif c_dummies.empty:
+                    features = b_dummies
+                else:
+                    features = pd.concat([b_dummies, c_dummies], axis=1)
+                    
+                # Apply clustering if we have features
+                if "Subcluster" not in group_df.columns:
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                    group_df["Subcluster"] = kmeans.fit_predict(features)
+                    
+            elif cluster_method == "Semantic":
+                # Use keyword embeddings
+                keywords = group_df["Keywords"].tolist()
+                
+                if not keywords or embedding_model is None:
+                    group_df["Subcluster"] = 0
+                else:
+                    embeddings = embedding_model.encode(keywords)
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                    group_df["Subcluster"] = kmeans.fit_predict(embeddings)
+                    
+            else:  # Hybrid
+                # Combine keywords with B and C tags only
+                combined_texts = group_df.apply(
+                    lambda row: f"{row['Keywords']} {row['B:Tag']} {row['C:Tag']}",
+                    axis=1
+                ).tolist()
+                
+                if not combined_texts or embedding_model is None:
+                    group_df["Subcluster"] = 0
+                else:
+                    embeddings = embedding_model.encode(combined_texts)
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                    group_df["Subcluster"] = kmeans.fit_predict(embeddings)
+        
+        # Create a unique global cluster ID for each subcluster
+        subcluster_map = {}
+        subclusters = group_df["Subcluster"].unique()
+        
+        for subcluster in subclusters:
+            subcluster_map[subcluster] = global_cluster_id
+            
+            # Store cluster info
+            subcluster_df = group_df[group_df["Subcluster"] == subcluster]
+            
+            # Get the most common B and C tags in this cluster
+            top_b_tags = subcluster_df["B:Tag"].value_counts().head(3).index.tolist()
+            top_c_tags = subcluster_df["C:Tag"].value_counts().head(3).index.tolist()
+            
+            # Get keywords in this cluster
+            keywords_in_cluster = subcluster_df["Keywords"].tolist()
+            
+            cluster_info[global_cluster_id] = {
+                "a_tag": a_tag,
+                "size": len(subcluster_df),
+                "b_tags": top_b_tags,
+                "c_tags": top_c_tags,
+                "keywords": keywords_in_cluster
+            }
+            
+            global_cluster_id += 1
+        
+        # Map subclusters to global cluster IDs
+        group_df["Cluster"] = group_df["Subcluster"].map(subcluster_map)
+        
+        # Add to the result dataframe
+        clustered_df = pd.concat([clustered_df, group_df], ignore_index=True)
+    
+    return clustered_df, cluster_info
+
+# NEW FUNCTION: Create visualization for two-stage clustering
+def create_two_stage_visualization(df_clustered, cluster_info):
+    """Create a visualization showing the distribution of clusters within A tag groups."""
+    # Count keywords per A tag
+    a_tag_counts = df_clustered.groupby("A_Group").size()
+    
+    # Get top A tags for visualization (limit to top 10 for readability)
+    top_a_tags = a_tag_counts.sort_values(ascending=False).head(10).index.tolist()
+    
+    # Prepare data for visualization
+    a_tags = []
+    cluster_ids = []
+    counts = []
+    
+    for a_tag in top_a_tags:
+        # Get clusters for this A tag
+        a_clusters = [k for k, v in cluster_info.items() if v["a_tag"] == a_tag]
+        
+        for cluster_id in a_clusters:
+            a_tags.append(a_tag)
+            cluster_ids.append(f"C{cluster_id}")
+            counts.append(cluster_info[cluster_id]["size"])
+    
+    # Create a DataFrame for plotting
+    plot_df = pd.DataFrame({
+        "A_Tag": a_tags,
+        "Cluster": cluster_ids,
+        "Count": counts
+    })
+    
+    # Create plot
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Use a grouped bar chart
+    pivot_df = plot_df.pivot_table(
+        index="A_Tag", columns="Cluster", values="Count", fill_value=0
+    )
+    
+    pivot_df.plot(kind="bar", stacked=True, ax=ax, colormap="tab20")
+    
+    ax.set_title("Keyword Distribution by A:Tag and Cluster")
+    ax.set_xlabel("A:Tag")
+    ax.set_ylabel("Number of Keywords")
+    ax.legend(title="Clusters", bbox_to_anchor=(1.05, 1), loc='upper left')
+    
+    plt.tight_layout()
+    
+    return fig
+
 # Helper Functions for GPT Integration and Clustering
 def generate_gpt_topics(keywords, a_tags, b_tags, api_key, frequency_data=None):
     """Generate content topics using GPT-4o-mini based on cluster keywords and tags."""
@@ -861,127 +1054,149 @@ elif mode == "Full Tagging":
                     except Exception as e:
                         st.error(f"Error generating analysis: {e}")
                         
-        # Add the new AI clustering section
+        # Add the new AI clustering section with two-stage approach
         st.subheader("🧩 AI-Powered Tag Clustering")
         st.markdown("""
-        Discover how your keywords naturally cluster beyond the assigned tags. 
-        This can reveal additional patterns and relationships in your keyword set.
+        Discover how your keywords naturally cluster beyond the assigned tags using a two-stage approach that first groups by A:Tag,
+        then clusters by B and C tags within each A:Tag group.
         """)
-        
+
+        st.info("""
+        **Two-Stage Clustering Approach:**
+        1. Keywords are first grouped by their A:Tag (primary category)
+        2. Within each A:Tag group, keywords are clustered based on B and C tags (or semantic meaning)
+        3. This ensures that all keywords in a cluster share the same A:Tag, with clustering focused on B and C tags
+        """)
+
         # Create cluster options
         clustering_col1, clustering_col2 = st.columns(2)
-        
+
         with clustering_col1:
-            num_clusters = st.slider("Number of clusters", 
+            num_clusters = st.slider("Max clusters per A:Tag group", 
                                    min_value=2, 
                                    max_value=10, 
                                    value=min(5, len(df) // 20),
                                    key="tag_num_clusters")
-        
+
         with clustering_col2:
             cluster_method = st.radio(
                 "Clustering method:",
                 ["Tag-based", "Semantic", "Hybrid"],
-                key="tag_cluster_method"
+                key="tag_cluster_method",
+                help="""
+                Tag-based: Cluster by B and C tags
+                Semantic: Cluster by keyword meaning
+                Hybrid: Combine tags and meaning
+                """
             )
-        
+
         if st.button("Generate Tag Clusters", key="generate_tag_clusters"):
-            with st.spinner("Analyzing keyword patterns..."):
+            with st.spinner("Analyzing keyword patterns with two-stage clustering..."):
                 # Get models
                 embedding_model, _ = get_models()
                 
-                # Process based on selected method
-                if cluster_method == "Tag-based":
-                    # One-hot encode tags
-                    a_dummies = pd.get_dummies(df["A:Tag"], prefix="A")
-                    b_dummies = pd.get_dummies(df["B:Tag"], prefix="B")
-                    c_dummies = pd.get_dummies(df["C:Tag"], prefix="C")
-                    
-                    features = pd.concat([a_dummies, b_dummies, c_dummies], axis=1)
-                    
-                elif cluster_method == "Semantic":
-                    # Use keyword embeddings
-                    keywords = df["Keywords"].tolist()
-                    features = embedding_model.encode(keywords)
-                    
-                else:  # Hybrid
-                    # Combine keywords with their tags
-                    combined_text = df.apply(
-                        lambda row: f"{row['Keywords']} {row['A:Tag']} {row['B:Tag']} {row['C:Tag']}",
-                        axis=1
-                    ).tolist()
-                    
-                    features = embedding_model.encode(combined_text)
-                
-                # Apply clustering
-                kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init=10)
-                clusters = kmeans.fit_predict(features)
-                
-                # Add cluster assignments to dataframe
-                df_clustered = df.copy()
-                df_clustered["Cluster"] = clusters
-                
-                # Create a visualization
-                if cluster_method in ["Semantic", "Hybrid"]:
-                    tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(df) // 10))
-                    embeddings_2d = tsne.fit_transform(features)
-                    
-                    viz_df = pd.DataFrame({
-                        "x": embeddings_2d[:, 0],
-                        "y": embeddings_2d[:, 1],
-                        "keyword": df["Keywords"],
-                        "cluster": clusters,
-                        "a_tag": df["A:Tag"]
-                    })
-                    
-                    # Create visualization
-                    fig, ax = plt.subplots(figsize=(10, 8))
-                    scatter = ax.scatter(
-                        viz_df["x"], viz_df["y"], 
-                        c=viz_df["cluster"], 
-                        cmap="tab10", 
-                        alpha=0.7,
-                        s=50
-                    )
-                    ax.set_title("Tag Cluster Visualization")
-                    ax.set_xticks([])
-                    ax.set_yticks([])
-                    legend = ax.legend(*scatter.legend_elements(), title="Clusters")
-                    ax.add_artist(legend)
-                    
-                    st.pyplot(fig)
-                
-                # Display clusters
-                st.subheader("Tag Clusters Overview")
-                
-                # Show each cluster in an expander
-                for cluster_id in range(num_clusters):
-                    cluster_keywords = df_clustered[df_clustered["Cluster"] == cluster_id]
-                    cluster_size = len(cluster_keywords)
-                    
-                    # Get top tags in this cluster
-                    top_a_tags = cluster_keywords["A:Tag"].value_counts().head(2).index.tolist()
-                    top_b_tags = cluster_keywords["B:Tag"].value_counts().head(3).index.tolist()
-                    
-                    with st.expander(f"Cluster {cluster_id}: {', '.join(top_a_tags)} ({cluster_size} keywords)"):
-                        st.markdown(f"**Main tags:** {', '.join(top_a_tags)}")
-                        st.markdown(f"**Secondary tags:** {', '.join(top_b_tags)}")
-                        
-                        # Show sample keywords
-                        sample_df = cluster_keywords[["Keywords", "A:Tag", "B:Tag"]].head(15)
-                        st.dataframe(sample_df)
-                
-                # Add download button for clusters
-                clustered_csv = df_clustered.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "Download Clustered Tags",
-                    clustered_csv,
-                    "tagged_keyword_clusters.csv",
-                    "text/csv",
-                    key="download_tag_clusters"
+                # Use the two-stage clustering approach
+                df_clustered, cluster_info = two_stage_clustering(
+                    df, 
+                    num_clusters=num_clusters, 
+                    cluster_method=cluster_method,
+                    embedding_model=embedding_model
                 )
                 
-                # If GPT is enabled, add cluster insights
+                # Add cluster assignments to the main dataframe
+                df["Cluster"] = df_clustered["Cluster"]
+                df["A_Group"] = df_clustered["A_Group"]
+                df["Subcluster"] = df_clustered["Subcluster"]
+                
+                # Show overview of clusters
+                st.subheader("Two-Stage Clustering Results")
+                
+                # Visualization of A tag groups and their clusters
+                fig = create_two_stage_visualization(df_clustered, cluster_info)
+                st.pyplot(fig)
+                
+                # Show clusters with their properties
+                st.markdown("### Clusters by A:Tag")
+                
+                # Group clusters by A tag for organized display
+                a_tags = sorted(df["A_Group"].unique())
+                
+                for a_tag in a_tags:
+                    with st.expander(f"A:Tag: {a_tag}"):
+                        # Get clusters for this A tag
+                        a_clusters = [k for k, v in cluster_info.items() if v["a_tag"] == a_tag]
+                        
+                        if not a_clusters:
+                            st.info(f"No clusters found for A:Tag '{a_tag}'")
+                            continue
+                            
+                        for cluster_id in a_clusters:
+                            info = cluster_info[cluster_id]
+                            
+                            st.markdown(f"#### Cluster {cluster_id}: {info['size']} keywords")
+                            
+                            # Show B and C tags
+                            if info["b_tags"]:
+                                st.markdown(f"**B:Tags:** {', '.join(info['b_tags'])}")
+                            if info["c_tags"]:
+                                st.markdown(f"**C:Tags:** {', '.join(info['c_tags'])}")
+                            
+                            # Show sample keywords
+                            sample_size = min(10, len(info["keywords"]))
+                            if sample_size > 0:
+                                st.markdown("**Sample Keywords:**")
+                                sample_df = pd.DataFrame({"Keywords": info["keywords"][:sample_size]})
+                                st.dataframe(sample_df)
+                            
+                            st.markdown("---")
+                            
+                # Add B-tag distribution visualization for selected A tag
+                st.subheader("B:Tag Distribution for Selected A:Tag")
+                selected_a_tag = st.selectbox("Select A:Tag to analyze:", a_tags)
+                
+                # Filter to the selected A tag
+                selected_clusters = [k for k, v in cluster_info.items() if v["a_tag"] == selected_a_tag]
+                
+                if selected_clusters:
+                    # Get B tag distribution
+                    b_tag_data = []
+                    
+                    for cluster_id in selected_clusters:
+                        info = cluster_info[cluster_id]
+                        cluster_df = df[df["Cluster"] == cluster_id]
+                        
+                        # Count B tags in this cluster
+                        b_counts = cluster_df["B:Tag"].value_counts().reset_index()
+                        b_counts.columns = ["B:Tag", "Count"]
+                        b_counts["Cluster"] = f"Cluster {cluster_id}"
+                        
+                        b_tag_data.append(b_counts)
+                    
+                    if b_tag_data:
+                        # Combine all B tag data
+                        b_tag_df = pd.concat(b_tag_data)
+                        
+                        # Create a stacked bar chart
+                        fig, ax = plt.subplots(figsize=(10, 6))
+                        
+                        # Get top B tags for readability
+                        top_b_tags = b_tag_df.groupby("B:Tag")["Count"].sum().nlargest(8).index.tolist()
+                        filtered_df = b_tag_df[b_tag_df["B:Tag"].isin(top_b_tags)]
+                        
+                        # Create pivot table for plotting
+                        pivot = filtered_df.pivot_table(
+                            index="B:Tag", columns="Cluster", values="Count", fill_value=0
+                        )
+                        
+                        # Plot
+                        pivot.plot(kind="bar", stacked=False, ax=ax)
+                        ax.set_title(f"B:Tag Distribution for A:Tag '{selected_a_tag}'")
+                        ax.set_ylabel("Count")
+                        ax.legend(title="Clusters")
+                        
+                        st.pyplot(fig)
+                
+                # Add GPT insights if enabled
                 if use_gpt and api_key:
                     st.subheader("💡 Cluster Insights")
                     if st.button("Generate Cluster Insights with GPT", key="tag_cluster_insights"):
@@ -989,50 +1204,66 @@ elif mode == "Full Tagging":
                             try:
                                 openai.api_key = api_key
                                 
-                                # Create a summary of clusters
-                                cluster_summaries = []
-                                for cluster_id in range(num_clusters):
-                                    cluster_keywords = df_clustered[df_clustered["Cluster"] == cluster_id]
-                                    top_a_tags = cluster_keywords["A:Tag"].value_counts().head(2).index.tolist()
-                                    top_b_tags = cluster_keywords["B:Tag"].value_counts().head(3).index.tolist()
-                                    sample_kws = cluster_keywords["Keywords"].sample(min(10, len(cluster_keywords))).tolist()
+                                # Process each A tag
+                                for a_tag in a_tags:
+                                    a_clusters = [k for k, v in cluster_info.items() if v["a_tag"] == a_tag]
                                     
-                                    cluster_summaries.append(
-                                        f"Cluster {cluster_id}: {', '.join(top_a_tags)} - {', '.join(top_b_tags)}\nSample keywords: {', '.join(sample_kws)}"
-                                    )
-                                
-                                # Pre-format the cluster summaries to avoid backslash issues in f-strings
-                                cluster_text = "\n\n".join(cluster_summaries)
-                                
-                                prompt = f"""You're analyzing keyword clusters for a content strategist.
+                                    if not a_clusters:
+                                        continue
+                                        
+                                    with st.expander(f"Insights for A:Tag: {a_tag}"):
+                                        # Prepare cluster data for GPT
+                                        cluster_data = []
+                                        for cluster_id in a_clusters:
+                                            info = cluster_info[cluster_id]
+                                            cluster_data.append({
+                                                "id": cluster_id,
+                                                "size": info["size"],
+                                                "b_tags": info["b_tags"],
+                                                "c_tags": info["c_tags"],
+                                                "sample_keywords": info["keywords"][:10]
+                                            })
+                                        
+                                        # Create the prompt
+                                        prompt = f"""Analyze these keyword clusters for A:Tag '{a_tag}':
 
-CLUSTERS:
-{cluster_text}
+{json.dumps(cluster_data, indent=2)}
 
 Please provide:
-1. A brief analysis of how these clusters differ from each other
-2. What these clusters suggest about audience interests and intent
-3. How the tag assignments could be improved based on these clusters
+1. How these clusters differ from each other based on B and C tags
+2. What user intent is revealed by each cluster
+3. Content recommendations for each cluster
 
-Keep your analysis concise and actionable."""
-                                
-                                response = openai.chat.completions.create(
-                                    model="gpt-4o-mini",
-                                    messages=[{"role": "user", "content": prompt}],
-                                    temperature=0.5
-                                )
-                                
-                                insights = response.choices[0].message.content
-                                st.markdown(insights)
+Keep your analysis concise and focused on B and C tag patterns."""
+                                        
+                                        response = openai.chat.completions.create(
+                                            model="gpt-4o-mini",
+                                            messages=[{"role": "user", "content": prompt}],
+                                            temperature=0.5,
+                                            max_tokens=500
+                                        )
+                                        
+                                        insights = response.choices[0].message.content
+                                        st.markdown(insights)
                             except Exception as e:
                                 st.error(f"Error generating insights: {e}")
+                
+                # Add download button for clusters
+                clustered_csv = df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    "Download Clustered Tags",
+                    clustered_csv,
+                    "tagged_keyword_clusters.csv",
+                    "text/csv",
+                    key="download_tag_clusters"
+                )
 
 elif mode == "Content Topic Clustering":
     st.title("📚 Generate Content Topics")
     
     st.markdown("""
     This mode analyzes tagged keywords to:
-    1. Group them into meaningful clusters
+    1. Group them into meaningful clusters using a two-stage approach by A:Tag
     2. Generate content topic ideas for each cluster
     3. Provide insights on user intent and content opportunities
     """)
@@ -1074,16 +1305,24 @@ elif mode == "Content Topic Clustering":
                 selected_a_tags = st.multiselect("Filter by A:Tag (leave empty for all)", a_tags, key="a_tags_filter")
                 
                 # Number of clusters
-                num_clusters = st.slider("Number of clusters", min_value=2, max_value=20, value=min(8, len(df) // 10),
-                                        help="Number of content topic clusters to generate", key="num_clusters")
+                num_clusters = st.slider("Max clusters per A:Tag group", 
+                                        min_value=2, 
+                                        max_value=10, 
+                                        value=min(5, len(df) // 20),
+                                        help="Maximum clusters to create within each A:Tag group",
+                                        key="topic_num_clusters")
             
             with col2:
                 # Clustering approach
                 clustering_approach = st.radio(
                     "Clustering Approach",
-                    ["Semantic (keyword meaning)", "Tag-based (A/B Tags)", "Hybrid (tags + meaning)"],
-                    help="How to group your keywords into clusters",
-                    key="clustering_approach"
+                    ["Tag-based", "Semantic", "Hybrid"],
+                    help="""
+                    Tag-based: Cluster by B and C tags
+                    Semantic: Cluster by keyword meaning
+                    Hybrid: Combine tags and meaning
+                    """,
+                    key="topic_clustering_approach"
                 )
                 
                 # GPT option
@@ -1092,15 +1331,6 @@ elif mode == "Content Topic Clustering":
                                                   help="Generate more creative topic ideas with GPT", key="use_gpt_topics")
                     if use_gpt_for_topics and not api_key:
                         st.warning("API key required for GPT topic generation")
-            
-            # Apply filters
-            if selected_a_tags:
-                df_filtered = df[df["A:Tag"].isin(selected_a_tags)]
-                if len(df_filtered) == 0:
-                    st.warning("No keywords match the selected filters")
-                    st.stop()
-            else:
-                df_filtered = df.copy()
             
             # Run clustering
             if st.button("Generate Content Topics", key="generate_topics_button"):
@@ -1114,92 +1344,116 @@ elif mode == "Content Topic Clustering":
                     # Get models
                     embedding_model, kw_model = get_models()
                     
-                    # 1. Create feature vectors based on the chosen approach
-                    if clustering_approach == "Tag-based (A/B Tags)":
-                        # Create one-hot encoding of tags
-                        a_dummies = pd.get_dummies(df_filtered["A:Tag"], prefix="A")
-                        b_dummies = pd.get_dummies(df_filtered["B:Tag"], prefix="B")
-                        
-                        features = pd.concat([a_dummies, b_dummies], axis=1)
-                        
-                    elif clustering_approach == "Semantic (keyword meaning)":
-                        # Use embeddings for semantic meaning
-                        st.text("Generating keyword embeddings...")
-                        keywords = df_filtered["Keywords"].tolist()
-                        # Process in batches to avoid memory issues with large datasets
-                        batch_size = 500
-                        features = []
-                        for i in range(0, len(keywords), batch_size):
-                            batch = keywords[i:i+batch_size]
-                            features.append(embedding_model.encode(batch))
-                        features = np.vstack(features)
-                        
-                    else:  # Hybrid approach
-                        # Combine tag information with semantic embeddings
-                        st.text("Generating hybrid features...")
-                        
-                        # Create enriched keywords by combining with tags
-                        enriched_keywords = df_filtered.apply(
-                            lambda row: f"{row['Keywords']} {row['A:Tag']} {row['B:Tag']}",
-                            axis=1
-                        ).tolist()
-                        
-                        # Process in batches
-                        batch_size = 500
-                        features = []
-                        for i in range(0, len(enriched_keywords), batch_size):
-                            batch = enriched_keywords[i:i+batch_size]
-                            features.append(embedding_model.encode(batch))
-                        features = np.vstack(features)
+                    # First, filter by selected A tags if specified
+                    if selected_a_tags:
+                        df_filtered = df[df["A:Tag"].isin(selected_a_tags)]
+                        if len(df_filtered) == 0:
+                            st.warning("No keywords match the selected filters")
+                            st.stop()
+                    else:
+                        df_filtered = df.copy()
+                    
+                    # Apply two-stage clustering approach
+                    progress_bar.progress(0.1)
+                    st.text("Applying two-stage clustering by A:Tag...")
+                    
+                    df_clustered, cluster_info = two_stage_clustering(
+                        df_filtered, 
+                        num_clusters=num_clusters,
+                        cluster_method=clustering_approach,
+                        embedding_model=embedding_model
+                    )
+                    
+                    # Combine the clustered data with the filtered dataframe
+                    df_filtered = df_filtered.reset_index(drop=True)
+                    df_filtered["Cluster"] = df_clustered["Cluster"] 
+                    df_filtered["A_Group"] = df_clustered["A_Group"]
+                    df_filtered["Subcluster"] = df_clustered["Subcluster"]
                     
                     progress_bar.progress(0.3)
                     
-                    # 2. Apply KMeans clustering
-                    st.text("Clustering keywords...")
-                    kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init=10)
-                    clusters = kmeans.fit_predict(features)
-                    df_filtered["Cluster"] = clusters
+                    # Create visualization for semantic or hybrid clustering
+                    viz_df = None
+                    if clustering_approach in ["Semantic", "Hybrid"]:
+                        st.text("Creating visualization...")
+                        
+                        # Use t-SNE on the whole dataset first
+                        all_keywords = df_filtered["Keywords"].tolist()
+                        
+                        # Sample if dataset is large
+                        max_viz_points = 1000
+                        if len(all_keywords) > max_viz_points:
+                            viz_indices = np.random.choice(len(all_keywords), max_viz_points, replace=False)
+                            viz_keywords = [all_keywords[i] for i in viz_indices]
+                            viz_clusters = df_filtered.iloc[viz_indices]["Cluster"].values
+                            viz_a_tags = df_filtered.iloc[viz_indices]["A:Tag"].values
+                            
+                            # Generate embeddings for the sampled keywords
+                            viz_embeddings = embedding_model.encode(viz_keywords)
+                        else:
+                            viz_keywords = all_keywords
+                            viz_clusters = df_filtered["Cluster"].values
+                            viz_a_tags = df_filtered["A:Tag"].values
+                            
+                            # Generate embeddings for all keywords
+                            viz_embeddings = embedding_model.encode(viz_keywords)
+                        
+                        # Apply t-SNE
+                        tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(viz_embeddings) // 10))
+                        embeddings_2d = tsne.fit_transform(viz_embeddings)
+                        
+                        # Create visualization dataframe
+                        viz_df = pd.DataFrame({
+                            "x": embeddings_2d[:, 0],
+                            "y": embeddings_2d[:, 1],
+                            "keyword": viz_keywords,
+                            "cluster": viz_clusters,
+                            "a_tag": viz_a_tags
+                        })
                     
                     progress_bar.progress(0.5)
                     
-                    # 3. Generate topic insights for each cluster
-                    st.text("Generating topic insights...")
+                    # Generate topic insights for each cluster
+                    st.text("Generating content topics for each cluster...")
+                    
+                    # Reset progress tracking for topic generation
                     cluster_insights = []
+                    topic_map = {}  # Map of cluster IDs to topic names
                     
-                    # Create a mapping of cluster IDs to topic names for later use
-                    topic_map = {}
-                    
-                    for cluster_id in range(num_clusters):
+                    # Process each cluster
+                    cluster_ids = sorted(cluster_info.keys())
+                    for i, cluster_id in enumerate(cluster_ids):
+                        info = cluster_info[cluster_id]
+                        a_tag = info["a_tag"]
+                        
+                        # Get cluster dataframe
                         cluster_df = df_filtered[df_filtered["Cluster"] == cluster_id]
                         
-                        # Get the most common tags
-                        top_a_tags = cluster_df["A:Tag"].value_counts().head(3).index.tolist()
-                        top_b_tags = cluster_df["B:Tag"].value_counts().head(5).index.tolist()
-                        
-                        # Get keywords in cluster
-                        keywords_in_cluster = cluster_df["Keywords"].tolist()
-                        
-                        # Sample keywords for analysis
+                        # Get the keywords from the cluster
+                        keywords_in_cluster = info["keywords"]
                         sample_keywords = keywords_in_cluster[:min(30, len(keywords_in_cluster))]
+                        
+                        # Extract top tags
+                        top_b_tags = info["b_tags"]
                         
                         # Optional: Get frequency data 
                         kw_freq = None
-                        if "Count" in cluster_df.columns:
+                        if "Count" in df_filtered.columns:
                             kw_freq = dict(zip(cluster_df["Keywords"], cluster_df["Count"]))
                         
                         # Generate topics with GPT or basic approach
                         if use_gpt_for_topics and api_key:
                             topic_ideas, expanded_ideas, value_props = generate_gpt_topics(
-                                sample_keywords, top_a_tags, top_b_tags, api_key, kw_freq
+                                sample_keywords, [a_tag], top_b_tags, api_key, kw_freq
                             )
                             # Also get cluster insights
                             cluster_analysis = get_gpt_cluster_insights(cluster_df, api_key)
                         else:
                             topic_ideas, expanded_ideas, value_props = generate_basic_topics(
-                                sample_keywords, top_a_tags, top_b_tags
+                                sample_keywords, [a_tag], top_b_tags
                             )
                             # Basic cluster analysis
-                            cluster_analysis = f"Cluster focused on {', '.join(top_a_tags)} with emphasis on {', '.join(top_b_tags[:2] if top_b_tags else ['general attributes'])}"
+                            cluster_analysis = f"Cluster focused on {a_tag} with emphasis on {', '.join(top_b_tags[:2] if top_b_tags else ['general attributes'])}"
                         
                         # Store the primary topic name in the mapping
                         if topic_ideas:
@@ -1218,8 +1472,9 @@ elif mode == "Content Topic Clustering":
                         cluster_insights.append({
                             "cluster_id": cluster_id,
                             "size": len(cluster_df),
-                            "a_tags": top_a_tags,
+                            "a_tags": [a_tag],  # Now always a single A tag per cluster
                             "b_tags": top_b_tags,
+                            "c_tags": info["c_tags"],
                             "keywords": keywords_in_cluster,
                             "sample_keywords": sample_keywords,
                             "topic_phrases": topic_phrases,
@@ -1230,40 +1485,10 @@ elif mode == "Content Topic Clustering":
                         })
                         
                         # Update progress
-                        progress_bar.progress(0.5 + (0.4 * (cluster_id + 1) / num_clusters))
+                        progress_bar.progress(0.5 + (0.4 * (i + 1) / len(cluster_ids)))
                     
-                    # 4. Create visualization
-                    viz_df = None
-                    if clustering_approach in ["Semantic (keyword meaning)", "Hybrid (tags + meaning)"]:
-                        st.text("Creating visualization...")
-                        # Use t-SNE for visualization
-                        tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(df_filtered) // 10))
-                        
-                        # Sample if dataset is large to speed up TSNE
-                        max_viz_points = 1000
-                        if len(df_filtered) > max_viz_points:
-                            viz_indices = np.random.choice(len(df_filtered), max_viz_points, replace=False)
-                            viz_features = features[viz_indices]
-                            viz_clusters = clusters[viz_indices]
-                            viz_keywords = df_filtered.iloc[viz_indices]["Keywords"].values
-                            viz_a_tags = df_filtered.iloc[viz_indices]["A:Tag"].values
-                        else:
-                            viz_features = features
-                            viz_clusters = clusters
-                            viz_keywords = df_filtered["Keywords"].values
-                            viz_a_tags = df_filtered["A:Tag"].values
-                        
-                        # Apply t-SNE
-                        embeddings_2d = tsne.fit_transform(viz_features)
-                        
-                        # Create visualization dataframe
-                        viz_df = pd.DataFrame({
-                            "x": embeddings_2d[:, 0],
-                            "y": embeddings_2d[:, 1],
-                            "keyword": viz_keywords,
-                            "cluster": viz_clusters,
-                            "a_tag": viz_a_tags
-                        })
+                    # Add topic labels to the DataFrame
+                    df_filtered["Content_Topic"] = df_filtered["Cluster"].map(topic_map)
                     
                     # Create topic summary table
                     topic_summary = []
@@ -1279,8 +1504,9 @@ elif mode == "Content Topic Clustering":
                                 "Format": insight['expanded_ideas'][i].replace(idea, "").strip("() ") if i < len(insight['expanded_ideas']) else "",
                                 "Value": value,
                                 "Cluster": insight['cluster_id'],
+                                "A Tag": insight['a_tags'][0],
                                 "Keywords": insight['size'],
-                                "Main Tags": ", ".join(insight['a_tags'] + insight['b_tags'][:2] if insight['b_tags'] else insight['a_tags'])
+                                "Main Tags": ", ".join(insight['b_tags'][:3] if insight['b_tags'] else [])
                             })
                     
                     topic_df = pd.DataFrame(topic_summary) if topic_summary else None
@@ -1289,16 +1515,14 @@ elif mode == "Content Topic Clustering":
                     progress_bar.progress(1.0)
                     progress_bar.empty()
                     
-                    # Add topic mapping to the filtered dataframe
-                    df_filtered["Content_Topic"] = df_filtered["Cluster"].map(topic_map)
-                    
                     # Store in session state
                     st.session_state.content_topics_processed = True
                     st.session_state.df_filtered = df_filtered
                     st.session_state.cluster_insights = cluster_insights
                     st.session_state.topic_df = topic_df
                     st.session_state.viz_df = viz_df
-                    st.session_state.topic_map = topic_map  # Store topic_map in session state
+                    st.session_state.topic_map = topic_map
+                    st.session_state.cluster_info = cluster_info  # Store cluster info for visualization
     
     # Display results from session state if already processed
     if 'content_topics_processed' in st.session_state and st.session_state.content_topics_processed:
@@ -1317,6 +1541,15 @@ elif mode == "Content Topic Clustering":
                     topic_map[i] = insight["topic_ideas"][0]
                 else:
                     topic_map[i] = f"Cluster {i}"
+        
+        # Show two-stage clustering visualization
+        st.subheader("A:Tag Cluster Distribution")
+        if 'cluster_info' in st.session_state:
+            cluster_info = st.session_state.cluster_info
+            
+            # Visualization of A tag groups and their clusters
+            fig = create_two_stage_visualization(df_filtered, cluster_info)
+            st.pyplot(fig)
         
         # Show visualization if available
         if st.session_state.viz_df is not None:
@@ -1339,8 +1572,54 @@ elif mode == "Content Topic Clustering":
             
             st.pyplot(fig)
         
+        # Display cluster insights by A tag
+        st.subheader("Content Topics by A:Tag")
+        
+        # Group clusters by A:Tag for easier exploration
+        a_tags = sorted(set(info["a_tag"] for info in cluster_info.values()))
+        
+        for a_tag in a_tags:
+            # Get clusters for this A:Tag
+            a_clusters = [k for k, v in cluster_info.items() if v["a_tag"] == a_tag]
+            
+            with st.expander(f"A:Tag: {a_tag} ({len(a_clusters)} content topics)"):
+                for cluster_id in a_clusters:
+                    # Get cluster info
+                    info = cluster_info[cluster_id]
+                    
+                    # Get topic name
+                    topic_name = topic_map.get(cluster_id, f"Cluster {cluster_id}")
+                    
+                    st.markdown(f"#### {topic_name}")
+                    st.markdown(f"**Size:** {info['size']} keywords")
+                    
+                    # Find the insight for this cluster
+                    insight = next((i for i in cluster_insights if i["cluster_id"] == cluster_id), None)
+                    if insight:
+                        st.markdown(f"**Analysis:** {insight['analysis']}")
+                    
+                    # Show B tags
+                    if info["b_tags"]:
+                        st.markdown(f"**Main B:Tags:** {', '.join(info['b_tags'])}")
+                    
+                    # Show sample keywords
+                    sample_size = min(5, len(info["keywords"]))
+                    if sample_size > 0:
+                        st.markdown("**Sample Keywords:**")
+                        sample_df = pd.DataFrame({"Keywords": info["keywords"][:sample_size]})
+                        st.dataframe(sample_df)
+                    
+                    # Show matching topics
+                    matching_topics = [row for idx, row in topic_df.iterrows() if row["Cluster"] == cluster_id]
+                    if matching_topics:
+                        st.markdown("**Topic Ideas:**")
+                        for topic in matching_topics[:3]:  # Show up to 3 topics
+                            st.markdown(f"- {topic['Topic']} ({topic['Format']})")
+                    
+                    st.markdown("---")
+        
         # 5. Display cluster insights
-        st.subheader("Content Topic Clusters")
+        st.subheader("All Content Topic Clusters")
         
         for insight in cluster_insights:
             cluster_id = insight["cluster_id"]
