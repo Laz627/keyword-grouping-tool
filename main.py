@@ -1,5 +1,14 @@
-# main.py - Contains all your app logic (imported by app.py)
 import streamlit as st
+
+# Set page config first
+st.set_page_config(
+    page_title="Keyword Tagging & Topic Generation Tool",
+    page_icon="🔍",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# main.py - Contains all your app logic (imported by app.py)
 import pandas as pd
 import re
 from collections import Counter
@@ -20,6 +29,13 @@ from nltk.stem import WordNetLemmatizer
 
 # --- OpenAI integration ---
 import openai
+
+# This is imported AFTER page_config to avoid conflicts
+from app_logic import run_app, load_embedding_model
+
+# Call the app function
+if __name__ == "__main__":
+    run_app()
 
 # Download required NLTK resources (quietly)
 nltk.download('punkt', quiet=True)
