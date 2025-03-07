@@ -25,8 +25,6 @@ from sklearn.cluster import DBSCAN, KMeans
 from sklearn.metrics.pairwise import cosine_similarity
 from tenacity import retry, stop_after_attempt, wait_exponential
 import gc
-import signal
-from contextlib import contextmanager
 
 # Try to import docx for Word document export
 try:
@@ -53,23 +51,6 @@ if 'full_tagging_processed' not in st.session_state:
     st.session_state.full_tagging_processed = False
 if 'content_topics_processed' not in st.session_state:
     st.session_state.content_topics_processed = False
-
-# Timeout context manager to prevent hanging
-@contextmanager
-def timeout(seconds):
-    def handler(signum, frame):
-        raise TimeoutError(f"Operation timed out after {seconds} seconds")
-    
-    # Save the original handler
-    try:
-        original_handler = signal.getsignal(signal.SIGALRM)
-        signal.signal(signal.SIGALRM, handler)
-        signal.alarm(seconds)
-        yield
-    finally:
-        signal.alarm(0)
-        if 'original_handler' in locals():
-            signal.signal(signal.SIGALRM, original_handler)
 
 # Load models on demand using session state
 def get_models():
@@ -1992,20 +1973,15 @@ elif mode == "Full Tagging":
                 embedding_model, _ = get_models()
                 
                 # Use the enhanced two-stage clustering with improved parameter values
-                try:
-                    with timeout(600):  # 10 minute timeout
-                        df_clustered, cluster_info = two_stage_clustering(
-                            df, 
-                            cluster_method=cluster_method,
-                            embedding_model=embedding_model,
-                            api_key=api_key,
-                            use_openai_embeddings=use_openai_embeddings,
-                            min_shared_keywords=min_shared_keywords,
-                            similarity_threshold=similarity_threshold  # Will be auto-adjusted if use_auto_threshold is True
-                        )
-                except TimeoutError:
-                    st.error("Clustering timed out. Try using fewer keywords or more aggressive clustering settings.")
-                    st.stop()
+                st.text("Processing clusters... this might take a few minutes for large datasets")
+                df_clustered, cluster_info = two_stage_clustering(
+                    df_filtered, 
+                    cluster_method=clustering_approach,
+                    embedding_model=embedding_model,
+                    api_key=api_key,
+                    use_openai_embeddings=use_openai_embeddings,
+                    min_shared_keywords=min_shared_keywords,
+                    similarity_threshold=similarity_threshold
                 
                 # Generate descriptive labels for each cluster
                 use_gpt_descriptors = use_gpt and api_key
