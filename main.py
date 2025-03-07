@@ -1,6 +1,6 @@
 import streamlit as st
 
-# Set page config first
+# Set page config first - must be the very first Streamlit command
 st.set_page_config(
     page_title="Keyword Tagging & Topic Generation Tool",
     page_icon="🔍",
@@ -8,30 +8,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# main.py - Contains all your app logic (imported by app.py)
-import pandas as pd
-import re
-from collections import Counter
-import numpy as np
-import json
-import matplotlib.pyplot as plt
-from sklearn.manifold import TSNE
-
-# --- KeyBERT & Sentence Embeddings ---
-from keybert import KeyBERT
-from sentence_transformers import SentenceTransformer
-from sklearn.cluster import KMeans
-
-# --- NLTK for Tokenization, POS tagging, and Lemmatization ---
-import nltk
-from nltk import word_tokenize, pos_tag
-from nltk.stem import WordNetLemmatizer
-
-# --- OpenAI integration ---
-import openai
-
-# This is imported AFTER page_config to avoid conflicts
-from app_logic import run_app, load_embedding_model
+# Import the app function AFTER setting page config
+# No other imports should be here to avoid conflicts
+from app_logic import run_app
 
 # Call the app function
 if __name__ == "__main__":
