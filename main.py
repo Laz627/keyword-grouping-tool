@@ -1065,6 +1065,30 @@ def generate_basic_topics(keywords, a_tags, b_tags):
     
     return topic_ideas, expanded_ideas, value_props
 
+def create_keyword_topic_mapping(df_filtered):
+    """Create a mapping between keywords and their associated content topics"""
+    # Create a subset of the DataFrame with just the essential columns
+    keyword_topic_df = df_filtered[["Keywords", "Cluster", "Subcluster", "Cluster_Label", "Content_Topic", "Cluster_Confidence"]]
+    
+    # Sort by Cluster and then by Confidence (descending)
+    keyword_topic_df = keyword_topic_df.sort_values(
+        ["Cluster", "Cluster_Confidence"], 
+        ascending=[True, False]
+    )
+    
+    # Keep only necessary columns for the final output
+    keyword_topic_df = keyword_topic_df[["Keywords", "Cluster", "Cluster_Label", "Content_Topic"]]
+    
+    # Rename columns for clarity
+    keyword_topic_df = keyword_topic_df.rename(columns={
+        "Keywords": "Keyword",
+        "Cluster": "Cluster ID", 
+        "Cluster_Label": "Cluster Name",
+        "Content_Topic": "Content Topic"
+    })
+    
+    return keyword_topic_df
+
 # UPDATED: Cost estimation for text-embedding-3-small
 def estimate_gpt4o_mini_costs(num_clusters, use_gpt_descriptors=True, use_gpt_topics=True):
     """
@@ -2237,6 +2261,58 @@ elif mode == "Content Topic Clustering":
             
             # Create download buttons with unique keys
             st.subheader("Export Results")
+
+            # Add dedicated keyword-topic mapping
+            st.subheader("Keyword-Topic Mapping")
+            st.info("This file shows which keywords belong to each content topic, helping you understand which keywords each topic should target.")
+            
+            # Create the keyword-topic mapping DataFrame
+            keyword_topic_df = create_keyword_topic_mapping(df_filtered)
+            
+            # Create download button
+            keyword_topic_csv = keyword_topic_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                "Download Keyword-Topic Mapping CSV",
+                keyword_topic_csv,
+                "keyword_topic_mapping.csv",
+                "text/csv",
+                key="download_keyword_topic_mapping"
+            )
+
+            # Also create a topic-centered version that groups by topic
+            st.info("For easier understanding of which keywords go with which topic:")
+            
+            # Create grouped version
+            keyword_groups = []
+            for cluster_id, topic in topic_map.items():
+                cluster_keywords = df_filtered[df_filtered["Cluster"] == cluster_id]["Keywords"].tolist()
+                cluster_name = cluster_descriptors.get(cluster_id, f"Cluster {cluster_id}")
+                
+                # Skip if no keywords
+                if not cluster_keywords:
+                    continue
+                    
+                # Add row for each keyword in this cluster
+                for keyword in cluster_keywords:
+                    keyword_groups.append({
+                        "Content Topic": topic,
+                        "Cluster Name": cluster_name,
+                        "Keyword": keyword
+                    })
+            
+            if keyword_groups:
+                topic_keywords_df = pd.DataFrame(keyword_groups)
+                topic_keywords_df = topic_keywords_df.sort_values(["Content Topic", "Cluster Name"])
+                
+                # Create download button for topic-centered version
+                topic_csv = topic_keywords_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    "Download Topic-Centered Keyword Mapping",
+                    topic_csv,
+                    "topic_keyword_mapping.csv",
+                    "text/csv",
+                    key="download_topic_centered_mapping"
+                )
             
             csv_result = df_filtered.to_csv(index=False).encode('utf-8')
             st.download_button(
