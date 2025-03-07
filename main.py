@@ -2004,13 +2004,16 @@ elif mode == "Full Tagging":
                 use_gpt_descriptors = use_gpt and api_key
                 cluster_descriptors = generate_cluster_descriptors(cluster_info, use_gpt_descriptors, api_key)
                 
-                # Add cluster assignments to the main dataframe
-                df["Cluster"] = df_clustered["Cluster"]
-                df["A_Group"] = df_clustered["A_Group"]
-                df["Subcluster"] = df_clustered["Subcluster"]
-                df["Cluster_Label"] = df["Cluster"].map(cluster_descriptors)
-                df["Cluster_Confidence"] = df_clustered["Cluster_Confidence"]
-                df["Is_Outlier"] = df_clustered["Is_Outlier"]
+                # Add cluster assignments only to the filtered dataframe (don't mix A-tags)
+                df_filtered["Cluster"] = df_clustered["Cluster"]
+                df_filtered["A_Group"] = df_clustered["A_Group"]
+                df_filtered["Subcluster"] = df_clustered["Subcluster"]
+                df_filtered["Cluster_Label"] = df_filtered["Cluster"].map(cluster_descriptors)
+                df_filtered["Cluster_Confidence"] = df_clustered["Cluster_Confidence"]
+                df_filtered["Is_Outlier"] = df_clustered["Is_Outlier"]
+                
+                # Use the filtered dataframe for all subsequent operations
+                df = df_filtered  # Replace the original df with filtered df
                 
                 # Show overview of clusters
                 st.subheader("Semantic Intent-Based Clustering Results")
