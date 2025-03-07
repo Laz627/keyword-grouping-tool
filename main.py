@@ -16,24 +16,6 @@ from app_logic import run_app
 if __name__ == "__main__":
     run_app()
 
-# Download required NLTK resources (quietly)
-nltk.download('punkt', quiet=True)
-nltk.download('averaged_perceptron_tagger', quiet=True)
-nltk.download('wordnet', quiet=True)
-nltk.download('stopwords', quiet=True)
-from nltk.corpus import stopwords
-stop_words = set(stopwords.words('english'))
-
-lemmatizer = WordNetLemmatizer()
-
-# Initialize KeyBERT and SentenceTransformer
-@st.cache_resource
-def load_embedding_model():
-    return SentenceTransformer('all-MiniLM-L6-v2')
-
-embedding_model = load_embedding_model()
-kw_model = KeyBERT(model=embedding_model)
-
 ###
 ### Helper Functions for Tagging
 ###
