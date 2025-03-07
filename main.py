@@ -1029,93 +1029,92 @@ elif mode == "Content Topic Clustering":
                     st.session_state.topic_df = topic_df
                     st.session_state.viz_df = viz_df
     
-    # Display results from session state if already processed
-    if 'content_topics_processed' in st.session_state and st.session_state.content_topics_processed:
-        df_filtered = st.session_state.df_filtered
-        cluster_insights = st.session_state.cluster_insights
-        topic_df = st.session_state.topic_df
+# Display results from session state if already processed
+if 'content_topics_processed' in st.session_state and st.session_state.content_topics_processed:
+    df_filtered = st.session_state.df_filtered
+    cluster_insights = st.session_state.cluster_insights
+    topic_df = st.session_state.topic_df
+    
+    # Show visualization if available
+    if st.session_state.viz_df is not None:
+        st.subheader("Keyword Cluster Visualization")
         
-        # Show visualization if available
-        if st.session_state.viz_df is not None:
-            st.subheader("Keyword Cluster Visualization")
-            
-            viz_df = st.session_state.viz_df
-            fig, ax = plt.subplots(figsize=(10, 8))
-            scatter = ax.scatter(
-                viz_df["x"], viz_df["y"], 
-                c=viz_df["cluster"], 
-                cmap="tab20", 
-                alpha=0.7,
-                s=50
-            )
-            ax.set_title("Keyword Clusters")
-            ax.set_xticks([])
-            ax.set_yticks([])
-            legend = ax.legend(*scatter.legend_elements(), title="Clusters")
-            ax.add_artist(legend)
-            
-            st.pyplot(fig)
-        
-        # 5. Display cluster insights
-        st.subheader("Content Topic Clusters")
-        
-        for insight in cluster_insights:
-            cluster_id = insight["cluster_id"]
-            size = insight["size"]
-            
-            # Create a title for the expander showing key info
-            if insight["a_tags"]:
-                main_tag = insight["a_tags"][0]
-                expander_title = f"Cluster {cluster_id}: {main_tag.title()} ({size} keywords)"
-            else:
-                expander_title = f"Cluster {cluster_id}: {size} keywords"
-                
-            with st.expander(expander_title):
-                # Show cluster analysis
-                st.markdown(f"**Cluster Analysis:** {insight['analysis']}")
-                
-                # Show tag information
-                if insight['a_tags']:
-                    st.markdown(f"**Main Tags:** {', '.join(insight['a_tags'])}")
-                if insight['b_tags']:
-                    st.markdown(f"**Secondary Tags:** {', '.join(insight['b_tags'])}")
-                
-                # Show topic phrases
-                if insight['topic_phrases']:
-                    st.markdown("**Key Phrases:** " + ", ".join(insight['topic_phrases']))
-                
-                # Content topic suggestions
-                if insight['topic_ideas']:
-                    st.markdown("### Suggested Content Topics")
-                    
-                    # Create a more visual representation of topics
-                    for i, (idea, value) in enumerate(zip(insight['expanded_ideas'], insight['value_props'])):
-                        st.markdown(f"**Topic {i+1}: {idea}**")
-                        st.markdown(f"_{value}_")
-                        st.markdown("---")
-                
-                # Sample keywords in a table
-                st.markdown("### Sample Keywords")
-                sample_size = min(10, len(insight['keywords']))
-                sample_df = pd.DataFrame({
-                    "Keywords": insight['keywords'][:sample_size]
-                })
-                st.table(sample_df)
-        
-        # Create download buttons with unique keys
-        st.subheader("Export Results")
-        
-        csv_result = df_filtered.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "Download Clustered Keywords CSV",
-            csv_result,
-            "content_topics.csv",
-            "text/csv",
-            key="download_clustered_keywords"
+        viz_df = st.session_state.viz_df
+        fig, ax = plt.subplots(figsize=(10, 8))
+        scatter = ax.scatter(
+            viz_df["x"], viz_df["y"], 
+            c=viz_df["cluster"], 
+            cmap="tab20", 
+            alpha=0.7,
+            s=50
         )
+        ax.set_title("Keyword Clusters")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        legend = ax.legend(*scatter.legend_elements(), title="Clusters")
+        ax.add_artist(legend)
         
-        # Show topic summary and download with unique key
-
+        st.pyplot(fig)
+    
+    # 5. Display cluster insights
+    st.subheader("Content Topic Clusters")
+    
+    for insight in cluster_insights:
+        cluster_id = insight["cluster_id"]
+        size = insight["size"]
+        
+        # Create a title for the expander showing key info
+        if insight["a_tags"]:
+            main_tag = insight["a_tags"][0]
+            expander_title = f"Cluster {cluster_id}: {main_tag.title()} ({size} keywords)"
+        else:
+            expander_title = f"Cluster {cluster_id}: {size} keywords"
+            
+        with st.expander(expander_title):
+            # Show cluster analysis
+            st.markdown(f"**Cluster Analysis:** {insight['analysis']}")
+            
+            # Show tag information
+            if insight['a_tags']:
+                st.markdown(f"**Main Tags:** {', '.join(insight['a_tags'])}")
+            if insight['b_tags']:
+                st.markdown(f"**Secondary Tags:** {', '.join(insight['b_tags'])}")
+            
+            # Show topic phrases
+            if insight['topic_phrases']:
+                st.markdown("**Key Phrases:** " + ", ".join(insight['topic_phrases']))
+            
+            # Content topic suggestions
+            if insight['topic_ideas']:
+                st.markdown("### Suggested Content Topics")
+                
+                # Create a more visual representation of topics
+                for i, (idea, value) in enumerate(zip(insight['expanded_ideas'], insight['value_props'])):
+                    st.markdown(f"**Topic {i+1}: {idea}**")
+                    st.markdown(f"_{value}_")
+                    st.markdown("---")
+            
+            # Sample keywords in a table
+            st.markdown("### Sample Keywords")
+            sample_size = min(10, len(insight['keywords']))
+            sample_df = pd.DataFrame({
+                "Keywords": insight['keywords'][:sample_size]
+            })
+            st.table(sample_df)
+    
+    # Create download buttons with unique keys
+    st.subheader("Export Results")
+    
+    csv_result = df_filtered.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        "Download Clustered Keywords CSV",
+        csv_result,
+        "content_topics.csv",
+        "text/csv",
+        key="download_clustered_keywords"
+    )
+    
+    # Show topic summary and download with unique key
     if topic_df is not None:
         st.subheader("Content Topic Ideas")
         st.dataframe(topic_df)
@@ -1183,47 +1182,47 @@ elif mode == "Content Topic Clustering":
                 "text/csv",
                 key="download_topic_mapping"
             )
-            
-            # Provide an overall content strategy if using GPT
-            if use_gpt and api_key:
-                st.subheader("📋 Content Strategy Overview")
-                if st.button("Generate Content Strategy Recommendations", key="content_strategy_button"):
-                    with st.spinner("Creating content strategy recommendations..."):
-                        try:
-                            # Extract topic information for the prompt
-                            top_topics = [
-                                f"{row['Topic']} ({row['Format']}): {row['Keywords']} keywords" 
-                                for _, row in topic_df.head(8).iterrows()
-                            ]
+        
+        # Provide an overall content strategy if using GPT
+        if use_gpt and api_key:
+            st.subheader("📋 Content Strategy Overview")
+            if st.button("Generate Content Strategy Recommendations", key="content_strategy_button"):
+                with st.spinner("Creating content strategy recommendations..."):
+                    try:
+                        # Extract topic information for the prompt
+                        top_topics = [
+                            f"{row['Topic']} ({row['Format']}): {row['Keywords']} keywords" 
+                            for _, row in topic_df.head(8).iterrows()
+                        ]
+                        
+                        # Get the distribution of A tags
+                        a_tag_counts = df_filtered["A:Tag"].value_counts()
+                        a_tag_info = [f"{tag}: {count}" for tag, count in a_tag_counts.items()]
+                        
+                        openai.api_key = api_key
+                        response = openai.chat.completions.create(
+                            model="gpt-4o-mini",
+                            messages=[{"role": "user", "content": f"""
+                            As a content strategist, create a brief content plan based on these keyword clusters.
                             
-                            # Get the distribution of A tags
-                            a_tag_counts = df_filtered["A:Tag"].value_counts()
-                            a_tag_info = [f"{tag}: {count}" for tag, count in a_tag_counts.items()]
+                            GENERATED CONTENT TOPICS:
+                            {', '.join(top_topics)}
                             
-                            openai.api_key = api_key
-                            response = openai.chat.completions.create(
-                                model="gpt-4o-mini",
-                                messages=[{"role": "user", "content": f"""
-                                As a content strategist, create a brief content plan based on these keyword clusters.
-                                
-                                GENERATED CONTENT TOPICS:
-                                {', '.join(top_topics)}
-                                
-                                KEYWORD CATEGORY DISTRIBUTION:
-                                {', '.join(a_tag_info)}
-                                
-                                Please provide:
-                                1. Top 3 priority content topics and why they should be prioritized
-                                2. How these topics could be connected in a content hub structure
-                                3. A suggestion for seasonal or evergreen content based on these topics
-                                
-                                Keep recommendations specific and actionable.
-                                """}],
-                                temperature=0.5,
-                                max_tokens=800
-                            )
+                            KEYWORD CATEGORY DISTRIBUTION:
+                            {', '.join(a_tag_info)}
                             
-                            strategy = response.choices[0].message.content
-                            st.markdown(strategy)
-                        except Exception as e:
-                            st.error(f"Error generating content strategy: {e}")
+                            Please provide:
+                            1. Top 3 priority content topics and why they should be prioritized
+                            2. How these topics could be connected in a content hub structure
+                            3. A suggestion for seasonal or evergreen content based on these topics
+                            
+                            Keep recommendations specific and actionable.
+                            """}],
+                            temperature=0.5,
+                            max_tokens=800
+                        )
+                        
+                        strategy = response.choices[0].message.content
+                        st.markdown(strategy)
+                    except Exception as e:
+                        st.error(f"Error generating content strategy: {e}")
