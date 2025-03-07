@@ -1903,8 +1903,12 @@ elif mode == "Full Tagging":
             gc.collect()
             
             with st.spinner("Analyzing keyword patterns with semantic intent-based clustering..."):
-                # Get models - get both like Content Topic does
+                # Get models - get both models
                 embedding_model, kw_model = get_models()
+                
+                # Create simpler progress tracking
+                progress_placeholder = st.empty()
+                progress_placeholder.text("Step 1/4: Preparing keywords...")
                 
                 # Filter by selected A-tags if any were chosen
                 if selected_a_tags:
@@ -1915,46 +1919,147 @@ elif mode == "Full Tagging":
                 else:
                     df_filtered = df.copy()
                 
-                # CRITICAL: Only use these specific columns like Content Topic does
+                # CRITICAL: Only use these specific columns
                 df_filtered = df_filtered[["Keywords", "A:Tag", "B:Tag", "C:Tag"]]
                 
-                # Use the enhanced two-stage clustering with improved parameter values
-                st.text("Processing clusters... this might take a few minutes for large datasets")
+                # Update progress
+                progress_placeholder.text("Step 2/4: Generating embeddings...")
                 
-                if use_enhanced_clustering and use_openai_embeddings and api_key:
-                    # EXACT COPY of clustering approach from Content Topic Clustering
-                    try:
-                        # Add progress indicator as Content Topic does
-                        progress_bar = st.progress(0.1)
-                        
-                        # Get embeddings with special context - this is the key difference
-                        enriched_embeddings = get_cached_enriched_embeddings(
-                            df_filtered["Keywords"].tolist(),
-                            {'A': df_filtered["A:Tag"].tolist(), 
-                             'B': df_filtered["B:Tag"].fillna("").tolist(),
-                             'C': df_filtered["C:Tag"].fillna("").tolist()},
-                            api_key
-                        )
-                        
-                        # Override the clustering approach to use these enriched embeddings
-                        df_clustered, cluster_info = two_stage_clustering(
-                            df_filtered,
-                            cluster_method="Semantic",  # Force semantic for enhanced mode
-                            embedding_model=embedding_model,  
-                            api_key=api_key,
-                            use_openai_embeddings=use_openai_embeddings,
-                            min_shared_keywords=min_shared_keywords,
-                            similarity_threshold=similarity_threshold,
-                            # Pass pre-computed embeddings
-                            precomputed_embeddings=enriched_embeddings
-                        )
-                        
-                        progress_bar.progress(0.5)
-                        
-                    except Exception as e:
-                        st.error(f"Clustering encountered an error: {e}")
-                        st.warning("Try using fewer keywords or more aggressive clustering settings.")
-                        st.stop()
+                # Use ONLY the simple, direct approach that works in Content Topic mode
+                try:
+                    # DIRECT COPY from Content Topic Clustering - basic approach only
+                    df_clustered, cluster_info = two_stage_clustering(
+                        df_filtered, 
+                        cluster_method=clustering_approach,
+                        embedding_model=embedding_model,
+                        api_key=api_key,
+                        use_openai_embeddings=use_openai_embeddings,
+                        min_shared_keywords=min_shared_keywords,
+                        similarity_threshold=similarity_threshold
+                    )
+                    
+                    # Update progress
+                    progress_placeholder.text("Step 3/4: Generating cluster labels...")
+                    
+                    # Generate descriptive labels - simplified
+                    use_gpt_descriptors = use_gpt and api_key
+                    cluster_descriptors = generate_cluster_descriptors(cluster_info, use_gpt_descriptors, api_key)
+                    
+                    # Update progress
+                    progress_placeholder.text("Step 4/4: Creating result display...")
+                    
+                    # Create separate results dataframe - NEVER modify original df
+                    results_df = df_filtered.copy()
+                    results_df["Cluster"] = df_clustered["Cluster"] 
+                    results_df["A_Group"] = df_clustered["A_Group"]
+                    results_df["Subcluster"] = df_clustered["Subcluster"]
+                    results_df["Cluster_Label"] = results_df["Cluster"].map(cluster_descriptors)
+                    results_df["Cluster_Confidence"] = df_clustered["Cluster_Confidence"]
+                    results_df["Is_Outlier"] = df_clustered["Is_Outlier"]
+                    
+                    # Add quality indicator
+                    results_df["Cluster_Quality"] = results_df["Cluster_Confidence"].apply(
+                        lambda x: "High" if x >= 0.8 else ("Medium" if x >= 0.6 else "Low")
+                    )
+                    
+                    # Clear progress
+                    progress_placeholder.empty()
+                    
+                    # Show overview of clusters
+                    st.subheader("Semantic Intent-Based Clustering Results")
+                    
+                    # Count clusters and outliers - safely handle Is_Outlier
+                    total_keywords = len(results_df)
+                    total_clusters = len([k for k, v in cluster_info.items() if not v.get("is_outlier_cluster", False)])
+                    total_outliers = len([k for k, v in cluster_info.items() if v.get("is_outlier_cluster", False)])
+                    
+                    # Get outlier keyword count safely
+                    results_df["Is_Outlier"] = results_df["Is_Outlier"].fillna(False)
+                    outlier_keywords = results_df[results_df["Is_Outlier"]].shape[0]
+                    outlier_percent = (outlier_keywords / total_keywords) * 100 if total_keywords > 0 else 0
+                    
+                    # Display statistics
+                    st.markdown(f"""
+                    **Clustering Summary:**
+                    - Total Keywords: {total_keywords}
+                    - Semantic Clusters Formed: {total_clusters}
+                    - Miscellaneous Groups: {total_outliers}
+                    - Outlier Keywords: {outlier_keywords} ({outlier_percent:.1f}%)
+                    """)
+                    
+                    # Display cluster visualization
+                    st.subheader("Keyword Cluster Distribution")
+                    fig = create_two_stage_visualization(results_df, cluster_info, cluster_descriptors)
+                    st.pyplot(fig)
+                    
+                    # Get unique A-tags from cluster_info
+                    unique_a_tags = sorted(set(info["a_tag"] for info in cluster_info.values()))
+                    
+                    # Show clusters by A-tag
+                    st.markdown("### Intent-Based Clusters by A:Tag")
+                    
+                    # Display each cluster
+                    for a_tag in unique_a_tags:
+                        with st.expander(f"A:Tag: {a_tag}"):
+                            # Get clusters for this A tag
+                            a_clusters = [k for k, v in cluster_info.items() if v["a_tag"] == a_tag]
+                            
+                            if not a_clusters:
+                                st.info(f"No clusters found for A:Tag '{a_tag}'")
+                                continue
+                                
+                            for cluster_id in a_clusters:
+                                info = cluster_info[cluster_id]
+                                is_outlier = info.get("is_outlier_cluster", False)
+                                
+                                # Get cluster label
+                                cluster_label = cluster_descriptors[cluster_id] if cluster_id in cluster_descriptors else f"Cluster {cluster_id}"
+                                
+                                # Display cluster header
+                                if is_outlier:
+                                    st.markdown(f"#### {cluster_label} ({info['size']} miscellaneous keywords)")
+                                    st.info("This is a miscellaneous group containing keywords that didn't share enough semantic intent with others.")
+                                else:
+                                    st.markdown(f"#### {cluster_label} ({info['size']} keywords)")
+                                
+                                # Show tags
+                                if info["b_tags"]:
+                                    st.markdown(f"**B:Tags:** {', '.join(info['b_tags'])}")
+                                if info["c_tags"]:
+                                    st.markdown(f"**C:Tags:** {', '.join(info['c_tags'])}")
+                                
+                                # Get cluster dataframe
+                                cluster_df = results_df[results_df["Cluster"] == cluster_id]
+                                
+                                # Get high confidence keywords
+                                high_conf_kws = cluster_df[cluster_df["Cluster_Confidence"] >= 0.7]
+                                
+                                # Show confidence stats
+                                avg_confidence = cluster_df['Cluster_Confidence'].mean()
+                                st.markdown(f"**Avg. Confidence:** {avg_confidence:.2f}")
+                                st.markdown(f"**High confidence keywords:** {len(high_conf_kws)} of {len(cluster_df)} ({len(high_conf_kws)/len(cluster_df)*100:.1f}%)")
+                                
+                                # Show sample keywords
+                                st.markdown("**Sample Keywords:**")
+                                sample_df = cluster_df[["Keywords", "Cluster_Confidence"]].sort_values("Cluster_Confidence", ascending=False).head(10).reset_index(drop=True)
+                                sample_df["Cluster_Confidence"] = sample_df["Cluster_Confidence"].apply(lambda x: f"{x:.2f}")
+                                st.dataframe(sample_df, hide_index=False)
+                                
+                                st.markdown("---")
+                    
+                    # Download button for clustered keywords
+                    clustered_csv = results_df.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        "Download Intent-Based Clusters",
+                        clustered_csv,
+                        "semantic_intent_clusters.csv",
+                        "text/csv",
+                        key="download_intent_clusters"
+                    )
+                    
+                except Exception as e:
+                    st.error(f"Clustering encountered an error: {str(e)}")
+                    st.error("Try using fewer keywords or more aggressive clustering settings.")
                 else:
                     # Use standard clustering
                     df_clustered, cluster_info = two_stage_clustering(
