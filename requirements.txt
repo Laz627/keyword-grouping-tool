@@ -1,9 +1,9 @@
-streamlit==1.24.0
-pandas==2.0.3
-keybert==0.7.0
-sentence-transformers==2.2.2
-scikit-learn==1.2.2
-nltk==3.8.1
-transformers==4.30.2
-huggingface-hub==0.16.4  # Required by sentence-transformers
-openpyxl
+streamlit>=1.31.0
+pandas>=2.0.0
+numpy>=1.24.0
+nltk>=3.8.1
+keybert>=0.7.0
+sentence-transformers>=2.2.2
+scikit-learn>=1.2.2
+matplotlib>=3.7.0
+openai>=1.12.0
