@@ -157,61 +157,66 @@ def get_openai_embeddings(texts, api_key):
 
 # Semantic intent-based clustering function
 def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=5, similarity_threshold=0.65):
-    """Cluster keywords based on semantic intent with minimum shared keyword requirement"""
-    from sklearn.cluster import DBSCAN
+    """Improved clustering based on semantic intent with hierarchical approach"""
+    from sklearn.cluster import AgglomerativeClustering
+    import numpy as np
+    from scipy.cluster.hierarchy import linkage, fcluster
     
     # For very small datasets, just put everything in one cluster
     if len(keywords) < min_shared_keywords:
         return np.zeros(len(keywords), dtype=int), np.ones(len(keywords))
     
-    # Calculate pairwise cosine similarity
-    similarities = cosine_similarity(embeddings)
+    # Normalize embeddings for better distance calculation
+    normalized_embeddings = embeddings.copy()
+    for i in range(len(normalized_embeddings)):
+        norm = np.linalg.norm(normalized_embeddings[i])
+        if norm > 0:
+            normalized_embeddings[i] = normalized_embeddings[i] / norm
     
-    # Convert to distance matrix (1 - similarity) and ensure non-negative values
-    distances = np.maximum(0, 1 - similarities)  # Ensure all distances are non-negative
+    # Use hierarchical clustering for more natural grouping
+    # Convert similarity threshold to distance threshold (1 - similarity)
+    distance_threshold = 1 - similarity_threshold
     
-    # Apply DBSCAN with min_samples=min_shared_keywords
-    eps = 1 - similarity_threshold  # Convert similarity threshold to distance threshold
-    dbscan = DBSCAN(eps=eps, min_samples=min_shared_keywords, metric='precomputed')
-    cluster_labels = dbscan.fit_predict(distances)
+    # Perform hierarchical clustering
+    Z = linkage(normalized_embeddings, method='average', metric='cosine')
     
-    # If all keywords are outliers (-1), try a more relaxed approach
-    if np.all(cluster_labels == -1):
-        # Try with lower min_samples
-        adjusted_min = max(2, min_shared_keywords // 2)
-        dbscan = DBSCAN(eps=eps, min_samples=adjusted_min, metric='precomputed')
-        cluster_labels = dbscan.fit_predict(distances)
+    # Cut the dendrogram to get clusters based on distance threshold
+    cluster_labels = fcluster(Z, t=distance_threshold, criterion='distance') - 1  # -1 to start from 0
+    
+    # Get cluster sizes
+    unique_clusters, cluster_sizes = np.unique(cluster_labels, return_counts=True)
+    
+    # Mark small clusters as outliers (-1)
+    for i, (cluster, size) in enumerate(zip(unique_clusters, cluster_sizes)):
+        if size < min_shared_keywords:
+            cluster_labels[cluster_labels == cluster] = -1
+    
+    # Recalculate cluster centers and confidence scores
+    unique_clusters = np.unique(cluster_labels)
+    cluster_centers = {}
+    
+    # Calculate cluster centers for non-outlier clusters
+    for cluster in unique_clusters:
+        if cluster == -1:
+            continue
+        cluster_indices = np.where(cluster_labels == cluster)[0]
+        cluster_centers[cluster] = np.mean(normalized_embeddings[cluster_indices], axis=0)
+    
+    # Calculate meaningful confidence scores
+    confidence_scores = np.full(len(keywords), 0.3)  # Base confidence for outliers
+    
+    for i, label in enumerate(cluster_labels):
+        if label == -1:
+            continue  # Keep outlier confidence at 0.3
         
-        # If still all outliers, use KMeans as fallback
-        if np.all(cluster_labels == -1):
-            n_clusters = max(1, len(keywords) // 10)  # Approximate number of clusters
-            from sklearn.cluster import KMeans
-            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-            cluster_labels = kmeans.fit_predict(embeddings)
-    
-    # Calculate meaningful confidence scores based on distance to cluster center
-    confidence_scores = np.full(len(keywords), 0.4)  # Start with base confidence
-    
-    # For each cluster (excluding outliers)
-    for cluster_id in set(cluster_labels):
-        if cluster_id == -1:
-            continue  # Skip outliers
-            
-        # Get indices of keywords in this cluster
-        cluster_indices = np.where(cluster_labels == cluster_id)[0]
+        # Calculate cosine similarity to cluster center
+        center = cluster_centers[label]
+        embedding = normalized_embeddings[i]
         
-        # Calculate cluster centroid
-        centroid = embeddings[cluster_indices].mean(axis=0)
-        
-        # Calculate cosine similarity to centroid for each keyword in cluster
-        for idx in cluster_indices:
-            keyword_embedding = embeddings[idx]
-            # Normalize vectors for cosine similarity
-            norm_centroid = centroid / np.linalg.norm(centroid)
-            norm_keyword = keyword_embedding / np.linalg.norm(keyword_embedding)
-            similarity = np.dot(norm_centroid, norm_keyword)
-            # Convert to confidence score (0.4 to 1.0 range)
-            confidence_scores[idx] = 0.4 + (similarity * 0.6)
+        # Cosine similarity
+        similarity = np.dot(center, embedding)
+        # Scale similarity to 0.5-1.0 range for better differentiation
+        confidence_scores[i] = 0.5 + (similarity * 0.5)
     
     return cluster_labels, confidence_scores
 
