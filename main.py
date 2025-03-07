@@ -168,25 +168,22 @@ def get_cached_enriched_embeddings(texts, tags, api_key, model="text-embedding-3
 
 # Updated function to get enriched OpenAI embeddings
 def get_enriched_openai_embeddings(texts, tags, api_key, model="text-embedding-3-small"):
-    """Enhance embeddings by adding tag context with improved model"""
+    """Enhanced embeddings that emphasize A-tag for better separation"""
     enriched_texts = []
     
     # Combine keywords with their tags for richer context
     for i, text in enumerate(texts):
-        # Fixed the order of condition checks to prevent KeyError
         a_tag = tags['A'][i] if 'A' in tags and i < len(tags['A']) else ""
         b_tag = tags['B'][i] if 'B' in tags and i < len(tags['B']) else ""
         c_tag = tags['C'][i] if 'C' in tags and i < len(tags['C']) else ""
         
-        context = f"keyword: {text}"
+        # Put more emphasis on A-tag to ensure proper separation
+        context = f"CATEGORY: {a_tag}, keyword: {text}"
         
-        if a_tag:
-            context += f", category: {a_tag}"
-            
-            if b_tag and c_tag:
-                context += f", attributes: {b_tag} {c_tag}"
-            elif b_tag:
-                context += f", attribute: {b_tag}"
+        if b_tag and c_tag:
+            context += f", attributes: {b_tag} {c_tag}"
+        elif b_tag:
+            context += f", attribute: {b_tag}"
         
         enriched_texts.append(context)
     
@@ -548,32 +545,8 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
                         use_openai_embeddings=False, min_shared_keywords=3, similarity_threshold=0.65):
     """
     Perform two-stage clustering with semantic intent-based approach:
-    1. Group by A tag
+    1. Group by A tag (STRICT - never mix keywords with different A tags)
     2. Within each A tag group, cluster by semantic intent with minimum shared keywords
-    
-    Parameters:
-    -----------
-    df : DataFrame
-        DataFrame containing Keywords, A:Tag, B:Tag, C:Tag columns
-    cluster_method : str
-        Method for clustering within A tag groups: "Tag-based", "Semantic", "Hybrid"
-    embedding_model : SentenceTransformer model
-        Model for generating embeddings (required for semantic and hybrid methods)
-    api_key : str
-        OpenAI API key (required if use_openai_embeddings is True)
-    use_openai_embeddings : bool
-        Whether to use OpenAI's text-embedding-3-small embeddings instead of SentenceTransformer
-    min_shared_keywords : int
-        Minimum number of keywords required to form a cluster
-    similarity_threshold : float
-        Similarity threshold for clustering (higher means more similar)
-        
-    Returns:
-    --------
-    clustered_df : DataFrame
-        Original DataFrame with additional columns including confidence score
-    cluster_info : dict
-        Dictionary with information about each cluster
     """
     # Step 1: Group by A tag
     a_tag_groups = df.groupby("A:Tag")
@@ -585,7 +558,7 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
     cluster_info = {}
     global_cluster_id = 0
     
-    # Process each A tag group
+    # Process each A tag group SEPARATELY - never combining different A tags
     for a_tag, group_df in a_tag_groups:
         group_size = len(group_df)
         
@@ -596,7 +569,7 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
         # Create a copy of the group with index reset
         group_df = group_df.copy().reset_index(drop=True)
         
-        # Add A_Group column
+        # IMPORTANT: Force separate A_Group tracking to ensure separation
         group_df["A_Group"] = a_tag
         
         # For confidence scoring
@@ -608,7 +581,7 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
             # Not enough samples to cluster meaningfully
             group_df["Subcluster"] = 0
         else:
-            # Enough samples to cluster - generate features based on selected method
+            # Choose clustering method for this A-tag group only
             if cluster_method == "Tag-based":
                 # Use only B and C tags for clustering within A tag groups
                 b_dummies = pd.get_dummies(group_df["B:Tag"].fillna(""), prefix="B")
@@ -626,7 +599,7 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
                     
                 # Apply clustering if we have features
                 if "Subcluster" not in group_df.columns and features.shape[1] > 0:
-                    # Apply semantic intent-based clustering with improved function
+                    # Apply semantic intent-based clustering for this A-tag group only
                     cluster_labels, confidence_scores = semantic_intent_clustering(
                         group_df["Keywords"].tolist(), 
                         features.values, 
@@ -648,7 +621,7 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
                 if not keywords or (not embedding_model and not use_openai_embeddings):
                     group_df["Subcluster"] = 0
                 else:
-                    # Generate embeddings based on selected method
+                    # Generate embeddings for this A-tag group only
                     if use_openai_embeddings and api_key:
                         # Use enriched OpenAI embeddings for better results
                         a_tags = group_df["A:Tag"].fillna("").tolist()
@@ -656,7 +629,7 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
                         c_tags = group_df["C:Tag"].fillna("").tolist()
                         
                         # Get enriched embeddings that include tag context
-                        embeddings = get_cached_enriched_embeddings(
+                        embeddings = get_enriched_openai_embeddings(
                             keywords, 
                             {'A': a_tags, 'B': b_tags, 'C': c_tags}, 
                             api_key
@@ -665,7 +638,7 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
                         # Use SentenceTransformer embeddings
                         embeddings = embedding_model.encode(keywords)
                     
-                    # Apply improved semantic intent-based clustering
+                    # Apply improved semantic clustering to this A-tag group only
                     cluster_labels, confidence_scores = semantic_intent_clustering(
                         keywords, 
                         embeddings,
@@ -688,20 +661,18 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
                 if not combined_texts or (not embedding_model and not use_openai_embeddings):
                     group_df["Subcluster"] = 0
                 else:
-                    # Generate embeddings based on selected method
+                    # Generate embeddings for this A-tag group only
                     if use_openai_embeddings and api_key:
-                        # Use enriched OpenAI embeddings
                         a_tags = group_df["A:Tag"].fillna("").tolist()
-                        embeddings = get_cached_enriched_embeddings(
+                        embeddings = get_enriched_openai_embeddings(
                             combined_texts, 
                             {'A': a_tags}, 
                             api_key
                         )
                     else:
-                        # Use SentenceTransformer embeddings
                         embeddings = embedding_model.encode(combined_texts)
                     
-                    # Apply improved semantic intent-based clustering
+                    # Apply clustering to this A-tag group only
                     cluster_labels, confidence_scores = semantic_intent_clustering(
                         combined_texts, 
                         embeddings,
@@ -721,7 +692,7 @@ def two_stage_clustering(df, cluster_method="Tag-based", embedding_model=None, a
         # Create an outlier cluster for this A tag
         outlier_cluster_id = global_cluster_id + len([s for s in subclusters if s != -1])
         
-        # Process regular subclusters
+        # Process regular subclusters within this A-tag group
         for subcluster in subclusters:
             # Skip -1 (outliers) for now
             if subcluster == -1:
@@ -1870,7 +1841,7 @@ elif mode == "Full Tagging":
                     help="How similar keywords must be to cluster together (higher = more similar)"
                 )
             else:
-                similarity_threshold = 0.65  # Default will be overridden
+                similarity_threshold = 0.75  # Default will be overridden
 
         # Add embedding diagnostics feature
         with st.expander("🔍 Embedding Diagnostics"):
@@ -2183,7 +2154,7 @@ elif mode == "Content Topic Clustering":
                         help="How similar keywords must be to cluster together (higher = more similar)"
                     )
                 else:
-                    similarity_threshold = 0.65  # Default will be overridden
+                    similarity_threshold = 0.75  # Default will be overridden
                 
                 # Clustering approach
                 clustering_approach = st.radio(
