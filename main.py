@@ -1974,6 +1974,7 @@ elif mode == "Full Tagging":
                 
                 # Use the enhanced two-stage clustering with improved parameter values
                 st.text("Processing clusters... this might take a few minutes for large datasets")
+                df_filtered = df.copy()
                 df_clustered, cluster_info = two_stage_clustering(
                     df_filtered, 
                     cluster_method=clustering_approach,
