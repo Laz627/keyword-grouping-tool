@@ -943,6 +943,104 @@ def create_two_stage_visualization(df_clustered, cluster_info, cluster_descripto
     
     return fig
 
+# NEW: Function to generate cluster-specific topic based on keywords
+def generate_topic_for_cluster(cluster_id, info, keywords, high_confidence_keywords, a_tag, b_tags, kw_model, use_gpt=False, api_key=None):
+    """
+    Generate a topic specifically aligned with the keywords in a cluster
+    
+    Parameters:
+    -----------
+    cluster_id : int
+        Unique identifier for the cluster
+    info : dict
+        Cluster information dictionary
+    keywords : list
+        List of all keywords in the cluster
+    high_confidence_keywords : list
+        List of high confidence keywords in the cluster
+    a_tag : str
+        Primary category tag
+    b_tags : list
+        Secondary attribute tags
+    kw_model : KeyBERT model
+        Model for extracting key phrases
+    use_gpt : bool
+        Whether to use GPT for topic generation
+    api_key : str
+        OpenAI API key
+        
+    Returns:
+    --------
+    topic : str
+        Generated topic title
+    """
+    # Use high confidence keywords for topic generation if available
+    if len(high_confidence_keywords) >= 5:
+        sample_keywords = high_confidence_keywords[:min(20, len(high_confidence_keywords))]
+    else:
+        sample_keywords = keywords[:min(20, len(keywords))]
+    
+    # Extract key phrases from the keywords to understand common themes
+    combined_text = " ".join(sample_keywords)
+    key_phrases = kw_model.extract_keywords(combined_text, keyphrase_ngram_range=(1, 3), top_n=5)
+    theme_phrases = [kp[0] for kp in key_phrases]
+    
+    # Generate topic with GPT if enabled
+    if use_gpt and api_key:
+        try:
+            openai.api_key = api_key
+            
+            # Create a prompt focusing on aligning the topic with the actual keywords
+            prompt = f"""You're creating a specific content topic for these keywords:
+
+KEYWORDS: {', '.join(sample_keywords)}
+
+PRIMARY CATEGORY: {a_tag}
+SECONDARY ATTRIBUTES: {', '.join(b_tags[:3]) if b_tags else 'none'}
+KEY THEMES: {', '.join(theme_phrases)}
+
+Create a concise, focused topic title that:
+1. Accurately represents these SPECIFIC keywords (don't make up unrelated topics)
+2. Uses {a_tag} as the main category
+3. Includes one or more of the key themes
+
+The topic should NOT include keywords that aren't related to the sample keywords.
+BAD EXAMPLE: "Window Installation Guide" for keywords about door hardware
+GOOD EXAMPLE: "Interior Door Hardware: Selection & Installation Guide" for keywords about door hardware
+
+Your response should be just the topic title (15 words max), nothing else.
+"""
+            
+            response = openai.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.4,
+                max_tokens=25
+            )
+            
+            topic = response.choices[0].message.content.strip()
+            
+            # Validate if the topic is too long or empty
+            if len(topic.split()) > 15 or not topic:
+                raise Exception("Invalid topic length")
+                
+            return topic
+            
+        except Exception as e:
+            # Fall back to simple topic generation
+            if theme_phrases:
+                main_theme = theme_phrases[0].title()
+                return f"{a_tag.title()} {main_theme}"
+            else:
+                return f"{a_tag.title()} {b_tags[0].title() if b_tags else 'Guide'}"
+    else:
+        # Generate simple topic without GPT
+        if theme_phrases:
+            main_theme = theme_phrases[0].title()
+            return f"{a_tag.title()} {main_theme}"
+        else:
+            return f"{a_tag.title()} {b_tags[0].title() if b_tags else 'Guide'}"
+
 # Helper Functions for GPT Integration
 def generate_gpt_topics(keywords, a_tags, b_tags, api_key, frequency_data=None):
     """Generate content topics using GPT-4o-mini based on cluster keywords and tags."""
@@ -1065,10 +1163,11 @@ def generate_basic_topics(keywords, a_tags, b_tags):
     
     return topic_ideas, expanded_ideas, value_props
 
+# NEW: Function to create keyword-topic mapping for CSV export
 def create_keyword_topic_mapping(df_filtered):
     """Create a mapping between keywords and their associated content topics"""
     # Create a subset of the DataFrame with just the essential columns
-    keyword_topic_df = df_filtered[["Keywords", "Cluster", "Subcluster", "Cluster_Label", "Content_Topic", "Cluster_Confidence"]]
+    keyword_topic_df = df_filtered[["Keywords", "Cluster", "Cluster_Label", "Content_Topic", "Cluster_Confidence"]]
     
     # Sort by Cluster and then by Confidence (descending)
     keyword_topic_df = keyword_topic_df.sort_values(
@@ -2090,27 +2189,47 @@ elif mode == "Content Topic Clustering":
                         if "Count" in df_filtered.columns:
                             kw_freq = dict(zip(cluster_df["Keywords"], cluster_df["Count"]))
                         
-                        # Generate topics with GPT or basic approach
+                        # Generate a main topic specifically for this cluster based on its keywords
+                        cluster_main_topic = generate_topic_for_cluster(
+                            cluster_id, 
+                            info, 
+                            keywords_for_topics, 
+                            high_confidence_keywords, 
+                            a_tag, 
+                            top_b_tags, 
+                            kw_model, 
+                            use_gpt_for_topics, 
+                            api_key
+                        )
+                        
+                        # Generate additional topic ideas with GPT or basic approach
                         if use_gpt_for_topics and api_key:
                             topic_ideas, expanded_ideas, value_props = generate_gpt_topics(
                                 sample_keywords, [a_tag], top_b_tags, api_key, kw_freq
                             )
+                            # Insert the main topic as the first idea
+                            topic_ideas.insert(0, cluster_main_topic)
+                            expanded_ideas.insert(0, f"{cluster_main_topic} (Primary Topic)")
+                            value_props.insert(0, "Primary topic aligned with this specific keyword cluster")
                         else:
                             # Basic topic generation
                             topic_ideas, expanded_ideas, value_props = generate_basic_topics(
                                 sample_keywords, [a_tag], top_b_tags
                             )
+                            # Insert the main topic as the first idea
+                            topic_ideas.insert(0, cluster_main_topic)
+                            expanded_ideas.insert(0, f"{cluster_main_topic} (Primary Topic)")
+                            value_props.insert(0, "Primary topic aligned with this specific keyword cluster")
                         
                         # Get cluster label
                         cluster_label = cluster_descriptors[cluster_id] if cluster_id in cluster_descriptors else f"Cluster {cluster_id}"
                         
-                        # Store the primary topic name in the mapping (use descriptive label if available)
+                        # Store the primary topic name in the mapping (use the cluster-specific topic)
                         if is_outlier_cluster:
                             topic_map[cluster_id] = f"{cluster_label} (Miscellaneous)"
-                        elif topic_ideas:
-                            topic_map[cluster_id] = f"{cluster_label}: {topic_ideas[0]}"
                         else:
-                            topic_map[cluster_id] = cluster_label
+                            # Use the custom cluster-specific topic
+                            topic_map[cluster_id] = cluster_main_topic
                         
                         # Extract topic phrases for visualization
                         if keywords_for_topics:
