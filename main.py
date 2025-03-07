@@ -167,8 +167,9 @@ def semantic_intent_clustering(keywords, embeddings, min_shared_keywords=5, simi
     # Calculate pairwise cosine similarity
     similarities = cosine_similarity(embeddings)
     
-    # Convert to distance matrix (1 - similarity)
-    distances = 1 - similarities
+    # Convert to distance matrix (1 - similarity) and ensure non-negative values
+    # Cosine similarity can range from -1 to 1, so distances could be negative due to floating point errors
+    distances = np.maximum(0, 1 - similarities)  # Ensure all distances are non-negative
     
     # Apply DBSCAN with min_samples=min_shared_keywords
     eps = 1 - similarity_threshold  # Convert similarity threshold to distance threshold
