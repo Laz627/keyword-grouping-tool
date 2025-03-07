@@ -2049,7 +2049,7 @@ elif mode == "Full Tagging":
                 st.markdown("### Intent-Based Clusters by A:Tag")
                 
                 # Group clusters by A tag for organized display
-                a_tags = sorted(df["A:Tag"].unique())  # Changed from A_Group to A:Tag
+                a_tags = sorted(df_filtered["A_Group"].unique())  # Changed from A_Group to A:Tag
                 
                 for a_tag in a_tags:
                     with st.expander(f"A:Tag: {a_tag}"):
