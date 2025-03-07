@@ -860,150 +860,151 @@ elif mode == "Full Tagging":
                         st.markdown(analysis)
                     except Exception as e:
                         st.error(f"Error generating analysis: {e}")
-
-    st.subheader("🧩 AI-Powered Tag Clustering")
-    st.markdown("""
-    Discover how your keywords naturally cluster beyond the assigned tags. 
-    This can reveal additional patterns and relationships in your keyword set.
-    """)
-    
-    # Create cluster options
-    clustering_col1, clustering_col2 = st.columns(2)
-    
-    with clustering_col1:
-        num_clusters = st.slider("Number of clusters", 
-                               min_value=2, 
-                               max_value=10, 
-                               value=min(5, len(df) // 20),
-                               key="tag_num_clusters")
-    
-    with clustering_col2:
-        cluster_method = st.radio(
-            "Clustering method:",
-            ["Tag-based", "Semantic", "Hybrid"],
-            key="tag_cluster_method"
-        )
-    
-    if st.button("Generate Tag Clusters", key="generate_tag_clusters"):
-        with st.spinner("Analyzing keyword patterns..."):
-            # Get models
-            embedding_model, _ = get_models()
-            
-            # Process based on selected method
-            if cluster_method == "Tag-based":
-                # One-hot encode tags
-                a_dummies = pd.get_dummies(df["A:Tag"], prefix="A")
-                b_dummies = pd.get_dummies(df["B:Tag"], prefix="B")
-                c_dummies = pd.get_dummies(df["C:Tag"], prefix="C")
-                
-                features = pd.concat([a_dummies, b_dummies, c_dummies], axis=1)
-                
-            elif cluster_method == "Semantic":
-                # Use keyword embeddings
-                keywords = df["Keywords"].tolist()
-                features = embedding_model.encode(keywords)
-                
-            else:  # Hybrid
-                # Combine keywords with their tags
-                combined_text = df.apply(
-                    lambda row: f"{row['Keywords']} {row['A:Tag']} {row['B:Tag']} {row['C:Tag']}",
-                    axis=1
-                ).tolist()
-                
-                features = embedding_model.encode(combined_text)
-            
-            # Apply clustering
-            kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init=10)
-            clusters = kmeans.fit_predict(features)
-            
-            # Add cluster assignments to dataframe
-            df_clustered = df.copy()
-            df_clustered["Cluster"] = clusters
-            
-            # Create a visualization
-            if cluster_method in ["Semantic", "Hybrid"]:
-                tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(df) // 10))
-                embeddings_2d = tsne.fit_transform(features)
-                
-                viz_df = pd.DataFrame({
-                    "x": embeddings_2d[:, 0],
-                    "y": embeddings_2d[:, 1],
-                    "keyword": df["Keywords"],
-                    "cluster": clusters,
-                    "a_tag": df["A:Tag"]
-                })
-                
-                # Create visualization
-                fig, ax = plt.subplots(figsize=(10, 8))
-                scatter = ax.scatter(
-                    viz_df["x"], viz_df["y"], 
-                    c=viz_df["cluster"], 
-                    cmap="tab10", 
-                    alpha=0.7,
-                    s=50
-                )
-                ax.set_title("Tag Cluster Visualization")
-                ax.set_xticks([])
-                ax.set_yticks([])
-                legend = ax.legend(*scatter.legend_elements(), title="Clusters")
-                ax.add_artist(legend)
-                
-                st.pyplot(fig)
-            
-            # Display clusters
-            st.subheader("Tag Clusters Overview")
-            
-            # Show each cluster in an expander
-            for cluster_id in range(num_clusters):
-                cluster_keywords = df_clustered[df_clustered["Cluster"] == cluster_id]
-                cluster_size = len(cluster_keywords)
-                
-                # Get top tags in this cluster
-                top_a_tags = cluster_keywords["A:Tag"].value_counts().head(2).index.tolist()
-                top_b_tags = cluster_keywords["B:Tag"].value_counts().head(3).index.tolist()
-                
-                with st.expander(f"Cluster {cluster_id}: {', '.join(top_a_tags)} ({cluster_size} keywords)"):
-                    st.markdown(f"**Main tags:** {', '.join(top_a_tags)}")
-                    st.markdown(f"**Secondary tags:** {', '.join(top_b_tags)}")
-                    
-                    # Show sample keywords
-                    sample_df = cluster_keywords[["Keywords", "A:Tag", "B:Tag"]].head(15)
-                    st.dataframe(sample_df)
-            
-            # Add download button for clusters
-            clustered_csv = df_clustered.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "Download Clustered Tags",
-                clustered_csv,
-                "tagged_keyword_clusters.csv",
-                "text/csv",
-                key="download_tag_clusters"
+                        
+        # Add the new AI clustering section
+        st.subheader("🧩 AI-Powered Tag Clustering")
+        st.markdown("""
+        Discover how your keywords naturally cluster beyond the assigned tags. 
+        This can reveal additional patterns and relationships in your keyword set.
+        """)
+        
+        # Create cluster options
+        clustering_col1, clustering_col2 = st.columns(2)
+        
+        with clustering_col1:
+            num_clusters = st.slider("Number of clusters", 
+                                   min_value=2, 
+                                   max_value=10, 
+                                   value=min(5, len(df) // 20),
+                                   key="tag_num_clusters")
+        
+        with clustering_col2:
+            cluster_method = st.radio(
+                "Clustering method:",
+                ["Tag-based", "Semantic", "Hybrid"],
+                key="tag_cluster_method"
             )
-            
-            # If GPT is enabled, add cluster insights
-            if use_gpt and api_key:
-                st.subheader("💡 Cluster Insights")
-                if st.button("Generate Cluster Insights with GPT", key="tag_cluster_insights"):
-                    with st.spinner("Analyzing clusters with GPT..."):
-                        try:
-                            openai.api_key = api_key
-                            
-                            # Create a summary of clusters
-                            cluster_summaries = []
-                            for cluster_id in range(num_clusters):
-                                cluster_keywords = df_clustered[df_clustered["Cluster"] == cluster_id]
-                                top_a_tags = cluster_keywords["A:Tag"].value_counts().head(2).index.tolist()
-                                top_b_tags = cluster_keywords["B:Tag"].value_counts().head(3).index.tolist()
-                                sample_kws = cluster_keywords["Keywords"].sample(min(10, len(cluster_keywords))).tolist()
+        
+        if st.button("Generate Tag Clusters", key="generate_tag_clusters"):
+            with st.spinner("Analyzing keyword patterns..."):
+                # Get models
+                embedding_model, _ = get_models()
+                
+                # Process based on selected method
+                if cluster_method == "Tag-based":
+                    # One-hot encode tags
+                    a_dummies = pd.get_dummies(df["A:Tag"], prefix="A")
+                    b_dummies = pd.get_dummies(df["B:Tag"], prefix="B")
+                    c_dummies = pd.get_dummies(df["C:Tag"], prefix="C")
+                    
+                    features = pd.concat([a_dummies, b_dummies, c_dummies], axis=1)
+                    
+                elif cluster_method == "Semantic":
+                    # Use keyword embeddings
+                    keywords = df["Keywords"].tolist()
+                    features = embedding_model.encode(keywords)
+                    
+                else:  # Hybrid
+                    # Combine keywords with their tags
+                    combined_text = df.apply(
+                        lambda row: f"{row['Keywords']} {row['A:Tag']} {row['B:Tag']} {row['C:Tag']}",
+                        axis=1
+                    ).tolist()
+                    
+                    features = embedding_model.encode(combined_text)
+                
+                # Apply clustering
+                kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init=10)
+                clusters = kmeans.fit_predict(features)
+                
+                # Add cluster assignments to dataframe
+                df_clustered = df.copy()
+                df_clustered["Cluster"] = clusters
+                
+                # Create a visualization
+                if cluster_method in ["Semantic", "Hybrid"]:
+                    tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(df) // 10))
+                    embeddings_2d = tsne.fit_transform(features)
+                    
+                    viz_df = pd.DataFrame({
+                        "x": embeddings_2d[:, 0],
+                        "y": embeddings_2d[:, 1],
+                        "keyword": df["Keywords"],
+                        "cluster": clusters,
+                        "a_tag": df["A:Tag"]
+                    })
+                    
+                    # Create visualization
+                    fig, ax = plt.subplots(figsize=(10, 8))
+                    scatter = ax.scatter(
+                        viz_df["x"], viz_df["y"], 
+                        c=viz_df["cluster"], 
+                        cmap="tab10", 
+                        alpha=0.7,
+                        s=50
+                    )
+                    ax.set_title("Tag Cluster Visualization")
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    legend = ax.legend(*scatter.legend_elements(), title="Clusters")
+                    ax.add_artist(legend)
+                    
+                    st.pyplot(fig)
+                
+                # Display clusters
+                st.subheader("Tag Clusters Overview")
+                
+                # Show each cluster in an expander
+                for cluster_id in range(num_clusters):
+                    cluster_keywords = df_clustered[df_clustered["Cluster"] == cluster_id]
+                    cluster_size = len(cluster_keywords)
+                    
+                    # Get top tags in this cluster
+                    top_a_tags = cluster_keywords["A:Tag"].value_counts().head(2).index.tolist()
+                    top_b_tags = cluster_keywords["B:Tag"].value_counts().head(3).index.tolist()
+                    
+                    with st.expander(f"Cluster {cluster_id}: {', '.join(top_a_tags)} ({cluster_size} keywords)"):
+                        st.markdown(f"**Main tags:** {', '.join(top_a_tags)}")
+                        st.markdown(f"**Secondary tags:** {', '.join(top_b_tags)}")
+                        
+                        # Show sample keywords
+                        sample_df = cluster_keywords[["Keywords", "A:Tag", "B:Tag"]].head(15)
+                        st.dataframe(sample_df)
+                
+                # Add download button for clusters
+                clustered_csv = df_clustered.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    "Download Clustered Tags",
+                    clustered_csv,
+                    "tagged_keyword_clusters.csv",
+                    "text/csv",
+                    key="download_tag_clusters"
+                )
+                
+                # If GPT is enabled, add cluster insights
+                if use_gpt and api_key:
+                    st.subheader("💡 Cluster Insights")
+                    if st.button("Generate Cluster Insights with GPT", key="tag_cluster_insights"):
+                        with st.spinner("Analyzing clusters with GPT..."):
+                            try:
+                                openai.api_key = api_key
                                 
-                                cluster_summaries.append(
-                                    f"Cluster {cluster_id}: {', '.join(top_a_tags)} - {', '.join(top_b_tags)}\nSample keywords: {', '.join(sample_kws)}"
-                                )
-                            
-                            # Pre-format the cluster summaries to avoid backslash issues in f-strings
-                            cluster_text = "\n\n".join(cluster_summaries)
-                            
-                            prompt = f"""You're analyzing keyword clusters for a content strategist.
+                                # Create a summary of clusters
+                                cluster_summaries = []
+                                for cluster_id in range(num_clusters):
+                                    cluster_keywords = df_clustered[df_clustered["Cluster"] == cluster_id]
+                                    top_a_tags = cluster_keywords["A:Tag"].value_counts().head(2).index.tolist()
+                                    top_b_tags = cluster_keywords["B:Tag"].value_counts().head(3).index.tolist()
+                                    sample_kws = cluster_keywords["Keywords"].sample(min(10, len(cluster_keywords))).tolist()
+                                    
+                                    cluster_summaries.append(
+                                        f"Cluster {cluster_id}: {', '.join(top_a_tags)} - {', '.join(top_b_tags)}\nSample keywords: {', '.join(sample_kws)}"
+                                    )
+                                
+                                # Pre-format the cluster summaries to avoid backslash issues in f-strings
+                                cluster_text = "\n\n".join(cluster_summaries)
+                                
+                                prompt = f"""You're analyzing keyword clusters for a content strategist.
 
 CLUSTERS:
 {cluster_text}
@@ -1014,17 +1015,17 @@ Please provide:
 3. How the tag assignments could be improved based on these clusters
 
 Keep your analysis concise and actionable."""
-                            
-                            response = openai.chat.completions.create(
-                                model="gpt-4o-mini",
-                                messages=[{"role": "user", "content": prompt}],
-                                temperature=0.5
-                            )
-                            
-                            insights = response.choices[0].message.content
-                            st.markdown(insights)
-                        except Exception as e:
-                            st.error(f"Error generating insights: {e}")
+                                
+                                response = openai.chat.completions.create(
+                                    model="gpt-4o-mini",
+                                    messages=[{"role": "user", "content": prompt}],
+                                    temperature=0.5
+                                )
+                                
+                                insights = response.choices[0].message.content
+                                st.markdown(insights)
+                            except Exception as e:
+                                st.error(f"Error generating insights: {e}")
 
 elif mode == "Content Topic Clustering":
     st.title("📚 Generate Content Topics")
