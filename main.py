@@ -161,9 +161,10 @@ def get_enriched_openai_embeddings(texts, tags, api_key, model="text-embedding-3
     
     # Combine keywords with their tags for richer context
     for i, text in enumerate(texts):
-        a_tag = tags['A'][i] if i < len(tags['A']) and 'A' in tags else ""
-        b_tag = tags['B'][i] if i < len(tags['B']) and 'B' in tags else ""
-        c_tag = tags['C'][i] if i < len(tags['C']) and 'C' in tags else ""
+        # Fixed the order of condition checks to prevent KeyError
+        a_tag = tags['A'][i] if 'A' in tags and i < len(tags['A']) else ""
+        b_tag = tags['B'][i] if 'B' in tags and i < len(tags['B']) else ""
+        c_tag = tags['C'][i] if 'C' in tags and i < len(tags['C']) else ""
         
         context = f"keyword: {text}"
         
