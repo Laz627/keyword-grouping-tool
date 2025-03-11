@@ -25,6 +25,23 @@ from sklearn.cluster import DBSCAN, KMeans
 from sklearn.metrics.pairwise import cosine_similarity
 from tenacity import retry, stop_after_attempt, wait_exponential
 import gc
+import signal
+from contextlib import contextmanager
+
+@contextmanager
+def timeout(seconds):
+    def handler(signum, frame):
+        raise TimeoutError(f"Function timed out after {seconds} seconds")
+    
+    # Set the timeout handler
+    signal.signal(signal.SIGALRM, handler)
+    signal.alarm(seconds)
+    
+    try:
+        yield
+    finally:
+        # Cancel the alarm
+        signal.alarm(0)
 
 # Try to import docx for Word document export
 try:
