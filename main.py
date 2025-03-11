@@ -25,23 +25,7 @@ from sklearn.cluster import DBSCAN, KMeans
 from sklearn.metrics.pairwise import cosine_similarity
 from tenacity import retry, stop_after_attempt, wait_exponential
 import gc
-import signal
-from contextlib import contextmanager
-
-@contextmanager
-def timeout(seconds):
-    def handler(signum, frame):
-        raise TimeoutError(f"Function timed out after {seconds} seconds")
-    
-    # Set the timeout handler
-    signal.signal(signal.SIGALRM, handler)
-    signal.alarm(seconds)
-    
-    try:
-        yield
-    finally:
-        # Cancel the alarm
-        signal.alarm(0)
+import concurrent.futures
 
 # Try to import docx for Word document export
 try:
@@ -2208,18 +2192,28 @@ elif mode == "Content Topic Clustering":
                     else:
                         # Standard processing for smaller datasets
                         try:
-                            with timeout(600):  # 10 minute timeout
-                                df_clustered, cluster_info = two_stage_clustering(
+                            # Create a thread pool executor for the clustering task
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                                # Submit the clustering task
+                                future = executor.submit(
+                                    two_stage_clustering,
                                     df_filtered, 
                                     cluster_method=clustering_approach,
                                     embedding_model=embedding_model,
                                     api_key=api_key,
                                     use_openai_embeddings=use_openai_embeddings,
                                     min_shared_keywords=min_shared_keywords,
-                                    similarity_threshold=similarity_threshold  # Will be auto-adjusted if needed
+                                    similarity_threshold=similarity_threshold
                                 )
-                        except TimeoutError:
-                            st.error("Clustering timed out. Try using fewer keywords or more aggressive clustering settings.")
+                                
+                                try:
+                                    # Wait for the result with a timeout
+                                    df_clustered, cluster_info = future.result(timeout=600)  # 10 minute timeout
+                                except concurrent.futures.TimeoutError:
+                                    st.error("Clustering timed out. Try using fewer keywords or more aggressive clustering settings.")
+                                    st.stop()
+                        except Exception as e:
+                            st.error(f"Error during clustering: {e}")
                             st.stop()
                         
                         # Generate descriptive labels for each cluster
