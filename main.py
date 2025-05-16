@@ -9,7 +9,7 @@ st.set_page_config(
 
 import nltk
 import os
-import shutil # For removing directory if forcing re-download
+import shutil
 
 # --- NLTK Data Path Configuration ---
 try:
@@ -20,9 +20,9 @@ except NameError:
 NLTK_DATA_DIR = os.path.join(BASE_DIR, "nltk_data")
 
 # --- FOR DEBUGGING: Option to force re-download ---
-# If you suspect a corrupted download, uncomment the next 3 lines
-# if os.path.exists(NLTK_DATA_DIR):
-#     shutil.rmtree(NLTK_DATA_DIR) # Remove existing directory
+# force_nltk_redownload = True # Set to True to clear and re-download
+# if force_nltk_redownload and os.path.exists(NLTK_DATA_DIR):
+#     shutil.rmtree(NLTK_DATA_DIR)
 #     st.sidebar.warning(f"Removed existing NLTK_DATA_DIR: {NLTK_DATA_DIR} for fresh download.")
 # ---
 
@@ -36,40 +36,47 @@ if os.path.isdir(NLTK_DATA_DIR) and NLTK_DATA_DIR not in nltk.data.path:
     nltk.data.path.insert(0, NLTK_DATA_DIR)
 
 # --- Download and Verify NLTK Resources ---
+# Adding 'punkt_tab' to the list, even if it's unusual, because the error mentions it.
+# The internal_path_to_verify for 'punkt_tab' is a guess based on the error.
 nltk_resources_to_download = {
-    "punkt": "tokenizers/punkt/english.pickle", # More specific path for verification
+    "punkt": "tokenizers/punkt/english.pickle",
+    "punkt_tab": "tokenizers/punkt_tab/english/", # Trying to verify the directory itself
     "averaged_perceptron_tagger": "taggers/averaged_perceptron_tagger/averaged_perceptron_tagger.pickle",
-    "wordnet": "corpora/wordnet.zip", # NLTK will handle unzipping if needed, or find the unzipped dir
+    "wordnet": "corpora/wordnet.zip",
     "stopwords": "corpora/stopwords.zip"
 }
-# For WordNet, sometimes it's just 'corpora/wordnet' if you're checking for the directory
-# For stopwords, 'corpora/stopwords'
 
-all_resources_loaded = True
+all_resources_loaded_successfully = True
 for resource_id, internal_path_to_verify in nltk_resources_to_download.items():
     try:
-        nltk.data.find(internal_path_to_verify) # Try to find a key file within the resource
-        st.sidebar.info(f"NLTK resource '{resource_id}' found and verified.")
+        nltk.data.find(internal_path_to_verify)
+        st.sidebar.info(f"NLTK resource for '{resource_id}' (checking '{internal_path_to_verify}') found.")
     except LookupError:
-        st.sidebar.warning(f"NLTK resource '{resource_id}' (specifically '{internal_path_to_verify}') not found. Attempting download...")
+        st.sidebar.warning(f"NLTK resource for '{resource_id}' (checking '{internal_path_to_verify}') not found. Attempting download of '{resource_id}'...")
         try:
-            # Set quiet=False for punkt during debugging to see detailed output
-            is_quiet = False if resource_id == "punkt" else True # Be verbose for punkt
+            is_quiet = False if resource_id.startswith("punkt") else True # Verbose for punkt and punkt_tab
             nltk.download(resource_id, download_dir=NLTK_DATA_DIR, quiet=is_quiet, raise_on_error=True)
             st.sidebar.success(f"NLTK resource '{resource_id}' downloaded to '{NLTK_DATA_DIR}'.")
-            # Attempt to verify again after download
+            # Attempt to verify again
             nltk.data.find(internal_path_to_verify)
-            st.sidebar.success(f"NLTK resource '{resource_id}' verified after download.")
+            st.sidebar.success(f"NLTK resource for '{resource_id}' verified after download.")
+        except ValueError as ve: # Handles cases where download ID might be invalid
+            if resource_id == "punkt_tab":
+                st.sidebar.warning(f"Could not download '{resource_id}' directly (may not be a standard package ID). Hoping 'punkt' package covers it.")
+                # We don't set all_resources_loaded_successfully to False for punkt_tab failure,
+                # as the main 'punkt' package might suffice.
+            else:
+                st.sidebar.error(f"Failed to download '{resource_id}': {ve} (Possibly invalid NLTK package ID).")
+                all_resources_loaded_successfully = False
         except Exception as e_download:
             st.sidebar.error(f"Failed to download or verify NLTK resource '{resource_id}': {e_download}")
-            all_resources_loaded = False
-            if resource_id == "punkt": # Punkt is absolutely critical for tokenization
-                st.error("Critical NLTK 'punkt' tokenizer data could not be loaded. The app cannot proceed.")
-                st.stop() # Stop the app if punkt fails
+            all_resources_loaded_successfully = False
+            if resource_id == "punkt": # If the main punkt download fails, it's critical
+                st.error("Critical NLTK 'punkt' data could not be loaded. App cannot continue.")
+                st.stop()
 
-if not all_resources_loaded:
-    st.error("One or more NLTK resources failed to load. Please check the sidebar and logs. The app may not function correctly.")
-    # Optionally st.stop() here if any failure is critical
+if not all_resources_loaded_successfully:
+    st.warning("One or more NLTK resources may have failed to load fully. Check sidebar. App might proceed with caution.")
 
 # Import other libraries (AFTER NLTK path setup)
 import pandas as pd
@@ -77,34 +84,49 @@ import re
 from collections import Counter
 import numpy as np
 from keybert import KeyBERT
+# These NLTK imports now happen AFTER the path and download logic
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
+# Crucially, import tokenizers here to see if they initialize
+from nltk import word_tokenize as nltk_word_tokenize_import_test, sent_tokenize as nltk_sent_tokenize_import_test 
 from sentence_transformers import SentenceTransformer
 import gc
 
-# Initialize NLTK components that rely on data AFTER the path setup
+# Initialize NLTK components that rely on data AFTER the path setup AND IMPORTS
 try:
-    stop_words = set(stopwords.words('english'))
-    lemmatizer = WordNetLemmatizer()
-    # Perform a test tokenization to ensure punkt is truly working
-    from nltk import word_tokenize as nltk_word_tokenize_init_test
-    test_tokens = nltk_word_tokenize_init_test("This is a test sentence for NLTK punkt.")
+    # The most important test is calling word_tokenize itself.
+    # If this works, other components that depend on it (like pos_tag if it uses word_tokenize implicitly) should also work.
+    test_tokens = nltk_word_tokenize_import_test("This is a test sentence for NLTK punkt initialization.")
     if not test_tokens:
-        raise ValueError("NLTK word_tokenize returned empty for a test sentence.")
-    st.sidebar.success("NLTK components (stopwords, lemmatizer, tokenizer) initialized successfully.")
+        # This case should ideally be caught by an exception from word_tokenize itself if punkt fails.
+        raise ValueError("NLTK word_tokenize returned empty for a test sentence, indicating a problem.")
+    
+    # If word_tokenize worked, then initialize others
+    stop_words_set = set(stopwords.words('english')) # Renamed to avoid conflict with module
+    lemmatizer_instance = WordNetLemmatizer()      # Renamed
+    st.sidebar.success("NLTK components (tokenizer, stopwords, lemmatizer) initialized successfully.")
 except LookupError as e_init_lookup:
     st.sidebar.error(f"CRITICAL NLTK LookupError during component initialization: {e_init_lookup}")
-    st.error(f"A critical NLTK resource is still missing despite download attempts. Please check the NLTK data path ({NLTK_DATA_DIR}) and ensure it contains the necessary files (especially for 'punkt'). App cannot continue.")
+    st.error(f"A critical NLTK resource is still missing despite download attempts. The error suggests: {e_init_lookup}. App cannot continue.")
     st.stop()
 except Exception as e_init_general:
     st.sidebar.error(f"Unexpected error during NLTK component initialization: {e_init_general}")
     st.error("An unexpected error occurred setting up NLTK. The app cannot continue.")
     st.stop()
 
-# ... (The rest of your script from "Initialize session state variable for tagging" onwards remains unchanged) ...
 
+# Assign to global-like variables used by the rest of the script
+stop_words = stop_words_set
+lemmatizer = lemmatizer_instance
+
+
+# Initialize session state variable for tagging
 if 'full_tagging_processed' not in st.session_state:
     st.session_state.full_tagging_processed = False
+
+# ... (The rest of your script from "@st.cache_resource def load_tagging_models():" onwards remains unchanged)
+# Make sure that any functions using `nltk.word_tokenize` or `nltk.pos_tag` import them directly
+# e.g., `from nltk import word_tokenize, pos_tag` inside `classify_keyword_three_tags_enhanced`
 
 # --- Model Loading (Simplified for Tagging) ---
 @st.cache_resource
@@ -122,7 +144,7 @@ def load_tagging_models():
                 def __init__(self, model=None): pass
                 def extract_keywords(self, doc, keyphrase_ngram_range=(1,1), stop_words=None, top_n=5, **kwargs):
                     from sklearn.feature_extraction.text import CountVectorizer
-                    import numpy as np 
+                    import numpy as np
                     try:
                         sw_list = list(stop_words) if stop_words else None
                         count_model = CountVectorizer(ngram_range=keyphrase_ngram_range, stop_words=sw_list).fit([doc])
@@ -185,6 +207,8 @@ def pick_tags_b_c_from_tokens_pos(tokens_with_pos_tags):
     return b_tag, c_tag
 
 def classify_keyword_three_tags_enhanced(keyword, seed_to_remove, other_omitted_list, user_a_tags_set, kw_model_runtime):
+    # These imports ensure that the functions are available in this scope
+    # and they would have been tested for initialization at the top level.
     from nltk import pos_tag as nltk_pos_tag, word_tokenize as nltk_word_tokenize 
 
     if kw_model_runtime is None: return "error-model", "error-model", "error-model"
