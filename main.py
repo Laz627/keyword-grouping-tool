@@ -1,11 +1,65 @@
 # Set page config first
 import streamlit as st
 st.set_page_config(
-    page_title="Enhanced Keyword Tagging Tool", # Changed title
+    page_title="Enhanced Keyword Tagging Tool",
     page_icon="🏷️✨",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+import nltk
+import os
+
+# --- NLTK Data Path Configuration ---
+# Determine the base directory (directory of the current script)
+# This is generally robust for Streamlit deployments.
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError: # __file__ is not defined in certain interactive environments (like a raw Python interpreter)
+    BASE_DIR = os.getcwd() # Fallback to current working directory
+
+nltk_data_dir = os.path.join(BASE_DIR, "nltk_data")
+
+# Create the directory if it doesn't exist
+if not os.path.exists(nltk_data_dir):
+    try:
+        os.makedirs(nltk_data_dir)
+        # st.sidebar.info(f"NLTK data directory created at: {nltk_data_dir}") # Optional: for debugging
+    except OSError as e:
+        st.sidebar.error(f"Could not create NLTK data directory at {nltk_data_dir}: {e}")
+        # Fallback strategy or stop if NLTK data is absolutely critical
+        # For now, we'll let it try to use default paths if creation fails.
+        # NLTK might still find data if it's elsewhere.
+        pass # Allow script to continue, NLTK will try default paths
+
+# Add your custom path to NLTK's list of search paths
+# This ensures NLTK looks in your specified directory first.
+if os.path.exists(nltk_data_dir) and nltk_data_dir not in nltk.data.path:
+    nltk.data.path.insert(0, nltk_data_dir) # Insert at the beginning for higher priority
+
+# Now try to download to this specific path if resources are missing or verify they exist
+nltk_resources = {
+    'punkt': 'tokenizers/punkt',
+    'averaged_perceptron_tagger': 'taggers/averaged_perceptron_tagger',
+    'wordnet': 'corpora/wordnet', # Or 'corpora/omw-1.4' for newer NLTK with WordNet 2022
+    'stopwords': 'corpora/stopwords'
+}
+
+for resource_name, resource_path in nltk_resources.items():
+    try:
+        nltk.data.find(resource_path)
+        # st.sidebar.success(f"NLTK resource '{resource_name}' found.") # Optional: for debugging
+    except LookupError:
+        st.sidebar.warning(f"NLTK resource '{resource_name}' not found. Attempting download to {nltk_data_dir}...")
+        try:
+            nltk.download(resource_name, download_dir=nltk_data_dir, quiet=True, raise_on_error=True)
+            st.sidebar.success(f"NLTK resource '{resource_name}' downloaded successfully.")
+        except Exception as e_nltk_download:
+            st.sidebar.error(f"Failed to download NLTK resource '{resource_name}' to {nltk_data_dir}: {e_nltk_download}")
+            st.sidebar.error("Please ensure this path is writable or manually place NLTK resources.")
+            # Depending on how critical, you might st.stop()
+# --- End NLTK Data Path Configuration ---
+
 
 # Import other libraries
 import pandas as pd
@@ -13,57 +67,19 @@ import re
 from collections import Counter
 import numpy as np
 from keybert import KeyBERT
-import nltk
-from nltk.stem import WordNetLemmatizer
+from nltk.stem import WordNetLemmatizer # NLTK Stem imports after path config
+from nltk.corpus import stopwords      # NLTK Corpus imports after path config
 from sentence_transformers import SentenceTransformer
 import gc
-import os
 
-nltk_data_dir = os.path.join(os.path.dirname(__file__), "nltk_data") 
-# For local development, you might use a more standard user location,
-# but for deployment, a relative path is often better.
-# Example for local: nltk_data_dir = os.path.expanduser("~/nltk_data")
-
-# Create the directory if it doesn't exist
-if not os.path.exists(nltk_data_dir):
-    try:
-        os.makedirs(nltk_data_dir)
-    except OSError as e:
-        st.error(f"Could not create NLTK data directory at {nltk_data_dir}: {e}")
-        # Fallback or stop if critical
-        nltk_data_dir = None # Indicate failure
-
-if nltk_data_dir:
-    # Add your custom path to NLTK's list of search paths
-    if nltk_data_dir not in nltk.data.path:
-        nltk.data.path.append(nltk_data_dir)
-
-    # Now try to download to this specific path if resources are missing
-    try:
-        nltk.download('punkt', download_dir=nltk_data_dir, quiet=True, raise_on_error=True)
-        nltk.download('averaged_perceptron_tagger', download_dir=nltk_data_dir, quiet=True, raise_on_error=True)
-        nltk.download('wordnet', download_dir=nltk_data_dir, quiet=True, raise_on_error=True)
-        nltk.download('stopwords', download_dir=nltk_data_dir, quiet=True, raise_on_error=True)
-    except Exception as e_nltk_download:
-        st.error(f"Failed to download NLTK resources to {nltk_data_dir}: {e_nltk_download}")
-        st.error("Please ensure the 'nltk_data' directory can be created and written to, or manually place NLTK resources there.")
-        # You might want to st.stop() here if NLTK is critical
-else:
-    st.error("NLTK data directory not configured. NLTK functionalities might fail.")
-
-# NLTK Resource Downloads (essential for tagging)
-nltk.download('punkt', quiet=True)
-nltk.download('averaged_perceptron_tagger', quiet=True)
-nltk.download('wordnet', quiet=True)
-nltk.download('stopwords', quiet=True)
-from nltk.corpus import stopwords
+# stop_words can now be defined as NLTK path should be set
 stop_words = set(stopwords.words('english'))
 # --- Optional: Add domain-specific stopwords for B/C tagging ---
 # custom_bc_stopwords = {"style", "type", "series", "version", "model"}
 # stop_words.update(custom_bc_stopwords)
 # ---
 
-lemmatizer = WordNetLemmatizer()
+lemmatizer = WordNetLemmatizer() # Initialize after path config
 
 # Initialize session state variable for tagging
 if 'full_tagging_processed' not in st.session_state:
@@ -72,6 +88,9 @@ if 'full_tagging_processed' not in st.session_state:
 # --- Model Loading (Simplified for Tagging) ---
 @st.cache_resource
 def load_tagging_models():
+    # ... (rest of the script from load_tagging_models onwards) ...
+    # NO CHANGES NEEDED TO THE REST OF THE SCRIPT BELOW THIS POINT
+    # The NLTK data path setup is done at the very beginning.
     models = {}
     try:
         sbert_model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -137,21 +156,18 @@ def canonicalize_phrase(phrase): # Used by initial rule mapping if present
     return " ".join(norm).replace("_", " ")
 
 def pick_tags_b_c_from_tokens_pos(tokens_with_pos_tags):
-    """Assigns B and C tags from a list of (token, POS_TAG) tuples, prioritizing Nouns and Adjectives."""
     potential_bc_tags = []
     for token, tag in tokens_with_pos_tags:
-        # Prioritize Nouns (NN, NNS, NNP, NNPS) and Adjectives (JJ, JJR, JJS)
         if tag.startswith('NN') or tag.startswith('JJ'):
-            normalized = normalize_token(token) # Lemmatize
+            normalized = normalize_token(token) 
             if normalized not in stop_words and (len(normalized) > 1 or normalized.isnumeric()):
                 potential_bc_tags.append(normalized)
-    
     b_tag = potential_bc_tags[0] if len(potential_bc_tags) >= 1 else ""
     c_tag = potential_bc_tags[1] if len(potential_bc_tags) >= 2 else ""
     return b_tag, c_tag
 
 def classify_keyword_three_tags_enhanced(keyword, seed_to_remove, other_omitted_list, user_a_tags_set, kw_model_runtime):
-    from nltk import pos_tag as nltk_pos_tag, word_tokenize as nltk_word_tokenize # Import here for clarity
+    from nltk import pos_tag as nltk_pos_tag, word_tokenize as nltk_word_tokenize 
 
     if kw_model_runtime is None: return "error-model", "error-model", "error-model"
     if not isinstance(keyword, str) or not keyword.strip(): return "general-other", "", ""
@@ -176,16 +192,11 @@ def classify_keyword_three_tags_enhanced(keyword, seed_to_remove, other_omitted_
         text_for_bc = re.sub(rf'\b{re.escape(omit_phrase.lower())}\b', '', text_for_bc, flags=re.IGNORECASE).strip()
     text_for_bc = ' '.join(text_for_bc.split())
 
-    # --- Handle common product type suffixes more explicitly ---
-    common_product_terms = {"door", "doors", "cabinet", "cabinets", "panel", "panels", "window", "windows"} # Can be expanded
-    # Normalize text_for_bc before checking against common_product_terms
+    common_product_terms = {"door", "doors", "cabinet", "cabinets", "panel", "panels", "window", "windows"} 
     normalized_text_for_bc = " ".join(normalize_token(t) for t in text_for_bc.lower().split())
     
     if normalized_text_for_bc in common_product_terms and identified_a_tag != "general-other":
-        # If A-tag is specific and remaining text is just a product type,
-        # assign product type to C (or D if implemented) and leave B empty.
-        return identified_a_tag, "", normalize_token(text_for_bc.lower().strip()) # Use original form for C
-    # --- End common product term handling ---
+        return identified_a_tag, "", normalize_token(text_for_bc.lower().strip()) 
 
     if not text_for_bc: return identified_a_tag, "", ""
 
@@ -197,20 +208,15 @@ def classify_keyword_three_tags_enhanced(keyword, seed_to_remove, other_omitted_
         tokens_from_candidate = nltk_word_tokenize(candidate_for_bc)
         tagged_candidate_tokens = nltk_pos_tag(tokens_from_candidate)
         b_tag, c_tag = pick_tags_b_c_from_tokens_pos(tagged_candidate_tokens)
-
-        # Fallback if POS tagging yields nothing from a non-empty KeyBERT candidate
         if not b_tag and tokens_from_candidate:
-            # Simple split and filter for B/C from the raw KeyBERT candidate
             simple_bc_tokens = [normalize_token(t) for t in tokens_from_candidate 
                                 if normalize_token(t) not in stop_words and (len(normalize_token(t)) > 1 or normalize_token(t).isnumeric())]
             b_tag = simple_bc_tokens[0] if len(simple_bc_tokens) >= 1 else ""
             c_tag = simple_bc_tokens[1] if len(simple_bc_tokens) >= 2 else ""
     else:
-        # Fallback: KeyBERT found nothing. Try POS tagging on the whole `text_for_bc`.
         tokens_from_text_for_bc = nltk_word_tokenize(text_for_bc)
         tagged_text_for_bc_tokens = nltk_pos_tag(tokens_from_text_for_bc)
         b_tag, c_tag = pick_tags_b_c_from_tokens_pos(tagged_text_for_bc_tokens)
-
     return identified_a_tag, b_tag, c_tag
 
 def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
@@ -222,12 +228,10 @@ def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
             for token in bval.split(): freq_in_col[token] += 1
         if isinstance(oval, str) and oval: 
             for token in oval.split(): freq_in_other[token] += 1
-
     unify_map = {} 
     all_tokens = set(freq_in_col.keys()) | set(freq_in_other.keys())
     for tok in all_tokens:
         unify_map[tok] = other_col if freq_in_other[tok] > freq_in_col[tok] else col_name
-
     new_b_col, new_o_col = [], []
     for _, row in df.iterrows():
         b_tokens = row[col_name].split() if isinstance(row[col_name], str) and row[col_name] else []
