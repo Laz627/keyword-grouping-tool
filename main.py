@@ -1,151 +1,98 @@
 # Set page config first
 import streamlit as st
 st.set_page_config(
-    page_title="Enhanced Keyword Tagging Tool",
-    page_icon="🏷️✨",
+    page_title="Maximized Keyword Tagging Tool",
+    page_icon="🏷️🎯",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 import nltk
 import os
-import shutil
+import shutil # For NLTK debugging if needed
 
-# --- NLTK Data Path Configuration ---
+# --- NLTK Data Path Configuration (Should be stable now) ---
 try:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 except NameError:
     BASE_DIR = os.getcwd()
-
 NLTK_DATA_DIR = os.path.join(BASE_DIR, "nltk_data")
-
-# --- FOR DEBUGGING: Option to force re-download ---
-# force_nltk_redownload = True # Set to True to clear and re-download
-# if force_nltk_redownload and os.path.exists(NLTK_DATA_DIR):
-#     shutil.rmtree(NLTK_DATA_DIR)
-#     st.sidebar.warning(f"Removed existing NLTK_DATA_DIR: {NLTK_DATA_DIR} for fresh download.")
-# ---
-
 if not os.path.exists(NLTK_DATA_DIR):
-    try:
-        os.makedirs(NLTK_DATA_DIR)
-    except OSError as e:
-        st.sidebar.error(f"Could not create NLTK data directory at {NLTK_DATA_DIR}: {e}.")
-
+    try: os.makedirs(NLTK_DATA_DIR)
+    except OSError: pass # Let NLTK try defaults if error
 if os.path.isdir(NLTK_DATA_DIR) and NLTK_DATA_DIR not in nltk.data.path:
     nltk.data.path.insert(0, NLTK_DATA_DIR)
 
-# --- Download and Verify NLTK Resources ---
-nltk_resources_to_download = {
-    "punkt": {"id": "punkt", "check_path": "tokenizers/punkt/english.pickle"},
-    "averaged_perceptron_tagger": {"id": "averaged_perceptron_tagger", "check_path": "taggers/averaged_perceptron_tagger/averaged_perceptron_tagger.pickle"},
-    # Add the specific resource mentioned in the error, even if it's unusual.
-    # We'll try to verify the directory it's looking for.
-    "averaged_perceptron_tagger_eng": {"id": "averaged_perceptron_tagger_eng", "check_path": "taggers/averaged_perceptron_tagger_eng/"},
-    "wordnet": {"id": "wordnet", "check_path": "corpora/wordnet.zip"},
-    "stopwords": {"id": "stopwords", "check_path": "corpora/stopwords.zip"}
+nltk_resource_ids = ["punkt", "averaged_perceptron_tagger", "wordnet", "stopwords"]
+resource_verified_paths = {
+    "punkt": "tokenizers/punkt/english.pickle",
+    "averaged_perceptron_tagger": "taggers/averaged_perceptron_tagger/averaged_perceptron_tagger.pickle",
+    "wordnet": "corpora/wordnet.zip",
+    "stopwords": "corpora/stopwords.zip"
 }
-
-all_resources_loaded_successfully = True
-for resource_key, resource_info in nltk_resources_to_download.items():
-    resource_id_to_download = resource_info["id"]
-    path_to_verify = resource_info["check_path"]
-    
+all_nltk_resources_ok = True
+for res_id in nltk_resource_ids:
     try:
-        # For directories, check os.path.exists directly with the full NLTK data path
-        if path_to_verify.endswith('/'): # It's a directory path
-            full_path_to_check = os.path.join(NLTK_DATA_DIR, path_to_verify) # Check within our target dir
-            if not os.path.isdir(full_path_to_check): # More robust check for directory
-                 # Try finding it via NLTK as a fallback, which searches all paths
-                nltk.data.find(path_to_verify)
-            # If no exception, it's found
-        else: # It's a file path
-            nltk.data.find(path_to_verify)
-        st.sidebar.info(f"NLTK resource '{resource_id_to_download}' (checking '{path_to_verify}') found.")
+        nltk.data.find(resource_verified_paths[res_id])
     except LookupError:
-        st.sidebar.warning(f"NLTK resource '{resource_id_to_download}' (checking '{path_to_verify}') not found. Attempting download of '{resource_id_to_download}'...")
+        st.sidebar.warning(f"NLTK '{res_id}' not found. Downloading to {NLTK_DATA_DIR}...")
         try:
-            is_quiet = False if resource_id_to_download.startswith("averaged_perceptron_tagger") or resource_id_to_download == "punkt" else True
-            nltk.download(resource_id_to_download, download_dir=NLTK_DATA_DIR, quiet=is_quiet, raise_on_error=True)
-            st.sidebar.success(f"NLTK resource '{resource_id_to_download}' downloaded to '{NLTK_DATA_DIR}'.")
-            
-            # Attempt to verify again
-            if path_to_verify.endswith('/'):
-                full_path_to_check = os.path.join(NLTK_DATA_DIR, path_to_verify)
-                if not os.path.isdir(full_path_to_check):
-                    # Try NLTK's find one last time for the directory
-                    nltk.data.find(path_to_verify) 
-            else:
-                nltk.data.find(path_to_verify)
-            st.sidebar.success(f"NLTK resource '{resource_id_to_download}' verified after download.")
+            nltk.download(res_id, download_dir=NLTK_DATA_DIR, quiet=False, raise_on_error=True)
+            nltk.data.find(resource_verified_paths[res_id]) # Verify after download
+            st.sidebar.success(f"NLTK '{res_id}' ready.")
+        except Exception as e_dl:
+            st.sidebar.error(f"Failed to load/download NLTK '{res_id}': {e_dl}")
+            all_nltk_resources_ok = False
+if not all_nltk_resources_ok:
+    st.error("A critical NLTK resource failed to load. App cannot continue.")
+    st.stop()
+# --- End NLTK Data Path Configuration ---
 
-        except ValueError as ve: # Handles cases where download ID might be invalid
-            if resource_id_to_download == "averaged_perceptron_tagger_eng":
-                st.sidebar.warning(f"Could not download '{resource_id_to_download}' directly (may not be a standard NLTK package ID). "
-                                   "Hoping the main 'averaged_perceptron_tagger' package includes necessary components.")
-                # Don't mark as critical failure for this specific one, rely on the main package.
-            else:
-                st.sidebar.error(f"Failed to download '{resource_id_to_download}': {ve} (Possibly invalid NLTK package ID).")
-                all_resources_loaded_successfully = False
-        except Exception as e_download:
-            st.sidebar.error(f"Failed to download or verify NLTK resource '{resource_id_to_download}': {e_download}")
-            all_resources_loaded_successfully = False
-            if resource_id_to_download in ["punkt", "averaged_perceptron_tagger"]:
-                st.error(f"Critical NLTK '{resource_id_to_download}' data could not be loaded. App cannot continue.")
-                st.stop()
-
-if not all_resources_loaded_successfully:
-    # Check if the main tagger at least downloaded, even if _eng check is tricky
-    try:
-        nltk.data.find(nltk_resources_to_download["averaged_perceptron_tagger"]["check_path"])
-    except LookupError:
-        st.error("Main 'averaged_perceptron_tagger' resource also failed. App cannot reliably perform POS tagging.")
-        st.stop()
-    st.warning("One or more optional NLTK resources may have failed to load fully. Check sidebar. App might proceed with caution if main tagger is present.")
-
-
-# Import other libraries (AFTER NLTK path setup)
 import pandas as pd
 import re
 from collections import Counter
 import numpy as np
 from keybert import KeyBERT
 from nltk.stem import WordNetLemmatizer
-from nltk.corpus import stopwords
-from nltk import word_tokenize as nltk_word_tokenize_import, pos_tag as nltk_pos_tag_import
+from nltk.corpus import stopwords as nltk_stopwords # Alias to avoid conflict
+from nltk import word_tokenize as nltk_word_tokenize_func, pos_tag as nltk_pos_tag_func
 from sentence_transformers import SentenceTransformer
 import gc
 
-# Initialize NLTK components
+# Initialize NLTK components (should work if downloads were successful)
 try:
-    test_tokens = nltk_word_tokenize_import("This is a test sentence.")
-    if not test_tokens: raise ValueError("word_tokenize test failed.")
-    
-    test_pos_tags = nltk_pos_tag_import(test_tokens) # This is the critical test now
-    if not test_pos_tags: raise ValueError("pos_tag test failed.")
-
-    stop_words_set = set(stopwords.words('english'))
-    lemmatizer_instance = WordNetLemmatizer()
-    st.sidebar.success("NLTK components (tokenizer, POS tagger, stopwords, lemmatizer) initialized successfully.")
-except LookupError as e_init_lookup:
-    st.sidebar.error(f"CRITICAL NLTK LookupError during component initialization: {e_init_lookup}")
-    st.error(f"A critical NLTK resource is still missing. The error suggests: {e_init_lookup}. App cannot continue. Please check the NLTK_DATA_DIR '{NLTK_DATA_DIR}' and ensure it contains the correct subdirectories and files for the tagger (e.g., 'taggers/averaged_perceptron_tagger_eng/').")
-    st.stop()
-except Exception as e_init_general:
-    st.sidebar.error(f"Unexpected error during NLTK component initialization: {e_init_general}")
-    st.error("An unexpected error occurred setting up NLTK. The app cannot continue.")
+    STOP_WORDS_ENGLISH = set(nltk_stopwords.words('english'))
+    LEMMATIZER_INSTANCE = WordNetLemmatizer()
+    # Test critical functions
+    nltk_word_tokenize_func("test")
+    nltk_pos_tag_func(nltk_word_tokenize_func("test"))
+    st.sidebar.success("NLTK components initialized.")
+except Exception as e_init:
+    st.error(f"Failed to initialize NLTK components: {e_init}. App cannot continue.")
     st.stop()
 
-stop_words = stop_words_set
-lemmatizer = lemmatizer_instance
 
-# ... (The rest of your script from "Initialize session state variable for tagging" onwards remains unchanged) ...
+# --- Global Stopwords (can be customized) ---
+# Start with English stopwords
+CUSTOMIZABLE_STOP_WORDS = set(STOP_WORDS_ENGLISH)
+# Add common, non-descriptive terms often found in product keywords
+# that you don't want as B or C tags.
+DOMAIN_SPECIFIC_BC_STOPWORDS = {
+    "style", "type", "series", "version", "model", "standard", "item",
+    "product", "new", "best", "top", "custom", "design", "feature", "collection"
+    # "door", "panel", "cabinet", "window" # Be careful adding A-Tags here
+}
+# CUSTOMIZABLE_STOP_WORDS.update(DOMAIN_SPECIFIC_BC_STOPWORDS)
+
+
+# Initialize session state variable for tagging
 if 'full_tagging_processed' not in st.session_state:
     st.session_state.full_tagging_processed = False
 
-# --- Model Loading (Simplified for Tagging) ---
+# --- Model Loading ---
 @st.cache_resource
 def load_tagging_models():
+    # ... (model loading code remains the same) ...
     models = {}
     try:
         sbert_model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -159,7 +106,7 @@ def load_tagging_models():
                 def __init__(self, model=None): pass
                 def extract_keywords(self, doc, keyphrase_ngram_range=(1,1), stop_words=None, top_n=5, **kwargs):
                     from sklearn.feature_extraction.text import CountVectorizer
-                    import numpy as np 
+                    import numpy as np
                     try:
                         sw_list = list(stop_words) if stop_words else None
                         count_model = CountVectorizer(ngram_range=keyphrase_ngram_range, stop_words=sw_list).fit([doc])
@@ -189,90 +136,124 @@ def get_tagging_keybert_model():
     if 'tagging_models_dict' not in st.session_state:
         st.session_state.tagging_models_dict = load_tagging_models()
     if not st.session_state.tagging_models_dict.get('models_loaded_successfully', False):
-        st.error("KeyBERT model for tagging could not be loaded. Functionality will be limited.")
+        st.error("KeyBERT model for tagging could not be loaded.")
         return None
     return st.session_state.tagging_models_dict['kw_model_st']
 
 # --- Text Preprocessing and Tagging Helper Functions ---
-def normalize_token(token):
-    token_lower = token.lower()
+def normalize_token(token_str):
+    token_lower = token_str.lower()
     if token_lower == "vs": return "v"
-    return lemmatizer.lemmatize(token_lower, pos='n') if lemmatizer else token_lower
+    return LEMMATIZER_INSTANCE.lemmatize(token_lower, pos='n')
 
-def normalize_phrase(phrase):
-    if not isinstance(phrase, str): return ""
-    tokens = [t.strip('.,;:!?()[]{}"\'') for t in phrase.lower().split()]
+def normalize_phrase(phrase_str):
+    if not isinstance(phrase_str, str): return ""
+    tokens = [t.strip('.,;:!?()[]{}"\'') for t in phrase_str.lower().split()]
     return " ".join(normalize_token(t) for t in tokens if t.isalnum() or t.isnumeric())
 
-def canonicalize_phrase(phrase): 
-    if not isinstance(phrase, str): return ""
-    tokens = [t.strip('.,;:!?()[]{}"\'') for t in phrase.lower().split()]
+def canonicalize_phrase(phrase_str):
+    if not isinstance(phrase_str, str): return ""
+    tokens = [t.strip('.,;:!?()[]{}"\'') for t in phrase_str.lower().split()]
     norm = [normalize_token(t) for t in tokens if (t.isalnum() or t.isnumeric()) and normalize_token(t) != "series"]
     return " ".join(norm).replace("_", " ")
 
-def pick_tags_b_c_from_tokens_pos(tokens_with_pos_tags):
-    potential_bc_tags = []
-    for token, tag in tokens_with_pos_tags:
+def get_pos_filtered_normalized_tokens(text_segment, user_a_tags_for_bc_filter):
+    """Tokenizes, POS tags, normalizes, and filters tokens, deprioritizing A-tags."""
+    if not text_segment or not isinstance(text_segment, str):
+        return []
+    
+    tokens_raw = nltk_word_tokenize_func(text_segment)
+    tokens_with_pos = nltk_pos_tag_func(tokens_raw)
+    
+    attribute_candidates = []
+    for token, tag in tokens_with_pos:
+        # Prioritize Nouns (NN*) and Adjectives (JJ*)
         if tag.startswith('NN') or tag.startswith('JJ'):
-            normalized = normalize_token(token) 
-            if normalized not in stop_words and (len(normalized) > 1 or normalized.isnumeric()):
-                potential_bc_tags.append(normalized)
-    b_tag = potential_bc_tags[0] if len(potential_bc_tags) >= 1 else ""
-    c_tag = potential_bc_tags[1] if len(potential_bc_tags) >= 2 else ""
+            normalized_token = normalize_token(token)
+            if normalized_token not in CUSTOMIZABLE_STOP_WORDS and \
+               (len(normalized_token) > 1 or normalized_token.isnumeric()):
+                # Deprioritize if it's also a defined A-Tag, but keep if it's the only option
+                is_an_a_tag = normalized_token in user_a_tags_for_bc_filter
+                attribute_candidates.append({"token": normalized_token, "is_a_tag": is_an_a_tag})
+
+    # Sort: non-A-tags first, then A-tags (if we have to use them)
+    attribute_candidates.sort(key=lambda x: x["is_a_tag"])
+    return [cand["token"] for cand in attribute_candidates]
+
+
+def assign_b_c_tags(attribute_tokens):
+    """Assigns B and C tags from a list of filtered, prioritized tokens."""
+    b_tag = attribute_tokens[0] if len(attribute_tokens) >= 1 else ""
+    c_tag = attribute_tokens[1] if len(attribute_tokens) >= 2 else ""
+    # Ensure B and C are not identical if possible
+    if b_tag and b_tag == c_tag:
+        c_tag = attribute_tokens[2] if len(attribute_tokens) >= 3 else ""
+    if b_tag and b_tag == c_tag: # Still identical and only two tokens were available
+        c_tag = ""
     return b_tag, c_tag
 
-def classify_keyword_three_tags_enhanced(keyword, seed_to_remove, other_omitted_list, user_a_tags_set, kw_model_runtime):
+
+def classify_keyword_maximized(keyword_str, seed_to_remove_str, other_omitted_list_str, user_a_tags_set_runtime, kw_model_runtime):
     if kw_model_runtime is None: return "error-model", "error-model", "error-model"
-    if not isinstance(keyword, str) or not keyword.strip(): return "general-other", "", ""
+    if not isinstance(keyword_str, str) or not keyword_str.strip(): return "general-other", "", ""
 
-    original_kw_lower = keyword.lower()
+    original_kw_lower = keyword_str.lower()
     identified_a_tag = "general-other"
-    text_for_bc = original_kw_lower
+    text_for_bc_processing = original_kw_lower
 
-    sorted_user_a_tags = sorted(list(user_a_tags_set), key=len, reverse=True)
-    for a_tag_candidate in sorted_user_a_tags:
-        if f" {a_tag_candidate} " in f" {original_kw_lower} " or \
-           original_kw_lower.startswith(f"{a_tag_candidate} ") or \
-           original_kw_lower.endswith(f" {a_tag_candidate}") or \
-           original_kw_lower == a_tag_candidate:
-            identified_a_tag = a_tag_candidate
-            text_for_bc = re.sub(rf'\b{re.escape(a_tag_candidate)}\b', '', text_for_bc, flags=re.IGNORECASE).strip()
+    # 1. A:Tag Identification
+    sorted_user_a_tags = sorted(list(user_a_tags_set_runtime), key=len, reverse=True)
+    for a_tag_cand in sorted_user_a_tags:
+        if f" {a_tag_cand} " in f" {original_kw_lower} " or \
+           original_kw_lower.startswith(f"{a_tag_cand} ") or \
+           original_kw_lower.endswith(f" {a_tag_cand}") or \
+           original_kw_lower == a_tag_cand:
+            identified_a_tag = a_tag_cand
+            text_for_bc_processing = re.sub(rf'\b{re.escape(a_tag_cand)}\b', '', text_for_bc_processing, flags=re.IGNORECASE).strip()
             break
     
-    if seed_to_remove and seed_to_remove.lower() != identified_a_tag:
-        text_for_bc = re.sub(rf'\b{re.escape(seed_to_remove.lower())}\b', '', text_for_bc, flags=re.IGNORECASE).strip()
-    for omit_phrase in other_omitted_list:
-        text_for_bc = re.sub(rf'\b{re.escape(omit_phrase.lower())}\b', '', text_for_bc, flags=re.IGNORECASE).strip()
-    text_for_bc = ' '.join(text_for_bc.split())
+    # 2. Remove seed and other omissions
+    if seed_to_remove_str and seed_to_remove_str.lower() != identified_a_tag:
+        text_for_bc_processing = re.sub(rf'\b{re.escape(seed_to_remove_str.lower())}\b', '', text_for_bc_processing, flags=re.IGNORECASE).strip()
+    for omit_phrase in other_omitted_list_str:
+        text_for_bc_processing = re.sub(rf'\b{re.escape(omit_phrase.lower())}\b', '', text_for_bc_processing, flags=re.IGNORECASE).strip()
+    text_for_bc_processing = ' '.join(text_for_bc_processing.split()) # Normalize whitespace
 
-    common_product_terms = {"door", "doors", "cabinet", "cabinets", "panel", "panels", "window", "windows"} 
-    normalized_text_for_bc_check = " ".join(normalize_token(t) for t in text_for_bc.lower().split()) 
-    
-    if normalized_text_for_bc_check in common_product_terms and identified_a_tag != "general-other":
-        return identified_a_tag, "", normalize_token(text_for_bc.lower().strip()) 
+    # 3. Handle Common Product Term Suffixes for C:Tag if A:Tag is specific
+    common_product_terms = {"door", "doors", "cabinet", "cabinets", "panel", "panels", "window", "windows"}
+    words_in_remaining_text = text_for_bc_processing.lower().split()
+    normalized_remaining_words = [normalize_token(w) for w in words_in_remaining_text]
 
-    if not text_for_bc: return identified_a_tag, "", ""
-
-    keyphrases = kw_model_runtime.extract_keywords(text_for_bc, keyphrase_ngram_range=(1,3), stop_words=stop_words, top_n=1)
-    
     b_tag, c_tag = "", ""
+
+    if identified_a_tag != "general-other" and len(normalized_remaining_words) == 1 and normalized_remaining_words[0] in common_product_terms:
+        # If A-tag is specific and only a common product term remains, it becomes B (more prominent than C)
+        b_tag = normalized_remaining_words[0]
+        c_tag = "" # No further C tag
+        return identified_a_tag, b_tag, c_tag
+    
+    # 4. B/C Tagging from `text_for_bc_processing`
+    if not text_for_bc_processing:
+        return identified_a_tag, "", "" # No text left for B/C
+
+    # Attempt 1: KeyBERT to find a salient phrase, then POS tagging on that phrase
+    keyphrases = kw_model_runtime.extract_keywords(text_for_bc_processing, keyphrase_ngram_range=(1,3), stop_words=CUSTOMIZABLE_STOP_WORDS, top_n=1)
+    
+    attribute_tokens_for_bc = []
     if keyphrases:
-        candidate_for_bc = keyphrases[0][0].lower()
-        tokens_from_candidate = nltk_word_tokenize_import(candidate_for_bc) 
-        tagged_candidate_tokens = nltk_pos_tag_import(tokens_from_candidate) 
-        b_tag, c_tag = pick_tags_b_c_from_tokens_pos(tagged_candidate_tokens)
-        if not b_tag and tokens_from_candidate:
-            simple_bc_tokens = [normalize_token(t) for t in tokens_from_candidate 
-                                if normalize_token(t) not in stop_words and (len(normalize_token(t)) > 1 or normalize_token(t).isnumeric())]
-            b_tag = simple_bc_tokens[0] if len(simple_bc_tokens) >= 1 else ""
-            c_tag = simple_bc_tokens[1] if len(simple_bc_tokens) >= 2 else ""
-    else:
-        tokens_from_text_for_bc = nltk_word_tokenize_import(text_for_bc) 
-        tagged_text_for_bc_tokens = nltk_pos_tag_import(tokens_from_text_for_bc) 
-        b_tag, c_tag = pick_tags_b_c_from_tokens_pos(tagged_text_for_bc_tokens)
+        keybert_candidate_phrase = keyphrases[0][0].lower()
+        attribute_tokens_for_bc = get_pos_filtered_normalized_tokens(keybert_candidate_phrase, user_a_tags_set_runtime)
+    
+    # Attempt 2: If KeyBERT yielded no usable attributes, POS tag the whole remaining `text_for_bc_processing`
+    if not attribute_tokens_for_bc:
+        attribute_tokens_for_bc = get_pos_filtered_normalized_tokens(text_for_bc_processing, user_a_tags_set_runtime)
+        
+    b_tag, c_tag = assign_b_c_tags(attribute_tokens_for_bc)
     return identified_a_tag, b_tag, c_tag
 
-def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
+
+def realign_tags_maximized(df, col_name="B:Tag", other_col="C:Tag"):
+    # ... (realign_tags_based_on_frequency logic remains the same) ...
     freq_in_col = Counter()
     freq_in_other = Counter()
     for _, row in df.iterrows():
@@ -304,23 +285,37 @@ def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
     return df
 
 # --- Main Streamlit UI for Full Tagging ---
-st.title("🏷️ Enhanced Keyword Tagging Tool")
-st.markdown("Processes keywords to assign A:Tag (Primary Category), B:Tag (Attribute 1), and C:Tag (Attribute 2).")
+st.title("🏷️ Maximized Keyword Tagging Tool")
+st.markdown("""
+Processes keywords to assign A:Tag (Primary Category), B:Tag (Primary Attribute), and C:Tag (Secondary Attribute).
+This version uses enhanced logic for more accurate tag assignments.
+""")
 
 col1, col2 = st.columns(2)
 with col1:
-    seed_input = st.text_input("Primary Seed Keyword to Remove (e.g., 'door', optional)", "", key="tag_seed_input_enhanced")
-    omit_str_input = st.text_input("Other Phrases to Omit (comma-separated, e.g., 'buy,price')", "buy,price,cost,for sale,near me,online", key="tag_omit_input_enhanced")
+    seed_input = st.text_input("Primary Seed Keyword to Remove (e.g., 'door', optional)", "", key="tag_seed_max")
+    omit_str_input = st.text_input("Other Phrases to Omit (comma-separated, e.g., 'buy,price')", "buy,price,cost,for sale,near me,online,cheap,best,top", key="tag_omit_max")
 with col2:
-    user_atags_str_input = st.text_input("Define Primary Categories (A:Tags, comma-separated)", "door,window,cabinet,panel,shaker,flat,raised,wood,metal,glass", key="tag_a_tags_main_input_enhanced")
-    do_realign_input = st.checkbox("Re-align B/C tags by frequency", value=True, key="tag_realign_input_enhanced")
+    user_atags_str_input = st.text_input("Define Primary Categories (A:Tags, comma-separated)", "door,window,cabinet,panel,shaker,flat,raised,wood,metal,glass,interior,exterior,kitchen,bathroom", key="tag_a_tags_main_max")
+    do_realign_input = st.checkbox("Re-align B/C tags by frequency", value=True, key="tag_realign_max")
+
+# Custom stopwords for B/C tagging UI
+st.sidebar.subheader("B/C Tag Stopwords")
+st.sidebar.info("Define terms that should NOT become B or C tags, in addition to standard English stopwords.")
+custom_bc_stopwords_input = st.sidebar.text_area("Custom B/C Stopwords (comma-separated)", ", ".join(DOMAIN_SPECIFIC_BC_STOPWORDS))
+if custom_bc_stopwords_input:
+    CUSTOMIZABLE_STOP_WORDS = set(STOP_WORDS_ENGLISH) # Reset to base
+    CUSTOMIZABLE_STOP_WORDS.update([normalize_token(sw.strip()) for sw in custom_bc_stopwords_input.split(',') if sw.strip()])
+else:
+    CUSTOMIZABLE_STOP_WORDS = set(STOP_WORDS_ENGLISH)
+
 
 omitted_list_runtime = [x.strip().lower() for x in omit_str_input.split(",") if x.strip()]
 user_a_tags_runtime = set(normalize_token(x.strip()) for x in user_atags_str_input.split(",") if x.strip())
 
-initial_rule_file_input = st.file_uploader("Upload Initial Tagging Rule CSV (Optional)", type=["csv"], key="tag_rule_file_input_enhanced")
-use_initial_rule_input = st.checkbox("Use Initial Tagging Rule if available", value=False, key="use_tag_rule_input_enhanced")
-
+initial_rule_file_input = st.file_uploader("Upload Initial Tagging Rule CSV (Optional)", type=["csv"], key="tag_rule_file_max")
+use_initial_rule_input = st.checkbox("Use Initial Tagging Rule if available", value=False, key="use_tag_rule_max")
+# ... (Initial rule mapping logic remains the same) ...
 initial_rule_mapping_runtime = {}
 if use_initial_rule_input and initial_rule_file_input is not None:
     try:
@@ -335,18 +330,20 @@ if use_initial_rule_input and initial_rule_file_input is not None:
         else: st.warning("Initial rule file provided but no valid rules loaded.")
     except Exception as e_rule: st.error(f"Error reading initial tagging rule file: {e_rule}"); initial_rule_mapping_runtime = {}
 
+
 if 'full_tagging_processed' in st.session_state and st.session_state.full_tagging_processed:
-    if st.button("Process New File or Change Settings", key="reset_tagging_button_enhanced"):
+    if st.button("Process New File or Change Settings", key="reset_tagging_max"):
         st.session_state.full_tagging_processed = False
         if 'df_tagged_output' in st.session_state: del st.session_state.df_tagged_output
         if 'summary_ab_output' in st.session_state: del st.session_state.summary_ab_output
         st.experimental_rerun()
 
 if not st.session_state.get('full_tagging_processed', False):
-    uploaded_file_tagging = st.file_uploader("Upload Keyword File (CSV/Excel)", type=["csv", "xls", "xlsx"], key="tag_file_main_uploader_enhanced")
+    uploaded_file_tagging = st.file_uploader("Upload Keyword File (CSV/Excel)", type=["csv", "xls", "xlsx"], key="tag_file_main_max")
     if uploaded_file_tagging:
         kw_model_for_processing = get_tagging_keybert_model()
         if kw_model_for_processing is None: st.error("Tagging model not loaded. Cannot proceed."); st.stop()
+        # ... (File reading and DataFrame preparation logic remains the same) ...
         try:
             df_input = pd.read_csv(uploaded_file_tagging) if uploaded_file_tagging.name.endswith(".csv") else pd.read_excel(uploaded_file_tagging)
         except Exception as e_file: st.error(f"Error reading keyword file: {e_file}"); st.stop()
@@ -357,7 +354,8 @@ if not st.session_state.get('full_tagging_processed', False):
         df_processing = df_processing[df_processing["Keywords"].str.strip() != ""].reset_index(drop=True)
         if df_processing.empty: st.warning("No valid keywords found after cleaning."); st.stop()
 
-        with st.spinner(f"Tagging {len(df_processing)} keywords..."):
+
+        with st.spinner(f"Tagging {len(df_processing)} keywords with maximized logic..."):
             gc.collect()
             A_list, B_list, C_list = [], [], []
             progress_bar_tagging = st.progress(0)
@@ -367,14 +365,14 @@ if not st.session_state.get('full_tagging_processed', False):
                 if use_initial_rule_input and canon_kw_for_rule in initial_rule_mapping_runtime:
                     a, b, c = initial_rule_mapping_runtime[canon_kw_for_rule]
                 else:
-                    a, b, c = classify_keyword_three_tags_enhanced(kw_item, seed_input, omitted_list_runtime, user_a_tags_runtime, kw_model_for_processing)
+                    a, b, c = classify_keyword_maximized(kw_item, seed_input, omitted_list_runtime, user_a_tags_runtime, kw_model_for_processing)
                 A_list.append(a); B_list.append(b); C_list.append(c)
                 progress_bar_tagging.progress((i + 1) / len(keywords_to_process_list))
             progress_bar_tagging.empty()
             df_processing["A:Tag"], df_processing["B:Tag"], df_processing["C:Tag"] = A_list, B_list, C_list
             if do_realign_input:
                 with st.spinner("Re-aligning B/C tags..."):
-                    df_processing = realign_tags_based_on_frequency(df_processing, "B:Tag", "C:Tag")
+                    df_processing = realign_tags_maximized(df_processing, "B:Tag", "C:Tag") # Use consistent function name
             df_processing["A+B Combo"] = df_processing["A:Tag"].fillna("") + " - " + df_processing["B:Tag"].fillna("")
             summary_ab_current = df_processing.groupby("A+B Combo").size().reset_index(name="Count").sort_values("Count", ascending=False)
             st.session_state.full_tagging_processed = True
@@ -382,20 +380,21 @@ if not st.session_state.get('full_tagging_processed', False):
             st.session_state.summary_ab_output = summary_ab_current
 
 if st.session_state.get('full_tagging_processed', False):
+    # ... (Display and download logic remains the same) ...
     df_display = st.session_state.get('df_tagged_output', pd.DataFrame())
     summary_ab_display = st.session_state.get('summary_ab_output', pd.DataFrame())
     if not df_display.empty:
-        st.subheader("Tagged Keywords")
+        st.subheader("Tagged Keywords (Maximized Logic)")
         st.dataframe(df_display[["Keywords", "A:Tag", "B:Tag", "C:Tag"]])
         try:
             csv_tagged = df_display.to_csv(index=False).encode('utf-8')
-            st.download_button(label="Download Full Tagged Keywords CSV", data=csv_tagged, file_name="tagged_keywords_enhanced.csv", mime="text/csv", key="dl_full_tags_btn_enh")
+            st.download_button(label="Download Full Tagged Keywords CSV", data=csv_tagged, file_name="tagged_keywords_maximized.csv", mime="text/csv", key="dl_full_tags_btn_max")
         except Exception as e_dl_full: st.error(f"Error preparing full tagged data for download: {e_dl_full}")
     if not summary_ab_display.empty:
         st.subheader("Tag Summary (A:Tag - B:Tag Combinations)")
         st.dataframe(summary_ab_display)
         try:
             csv_summary = summary_ab_display.to_csv(index=False).encode('utf-8')
-            st.download_button(label="Download Tag Summary CSV", data=csv_summary, file_name="tag_summary_enhanced.csv", mime="text/csv", key="dl_tag_summary_btn_enh")
+            st.download_button(label="Download Tag Summary CSV", data=csv_summary, file_name="tag_summary_maximized.csv", mime="text/csv", key="dl_tag_summary_btn_max")
         except Exception as e_dl_summary: st.error(f"Error preparing tag summary for download: {e_dl_summary}")
     if df_display.empty and summary_ab_display.empty: st.info("No tagging results. Upload a file.")
