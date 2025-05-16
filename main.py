@@ -11,75 +11,104 @@ import nltk
 import os
 
 # --- NLTK Data Path Configuration ---
-# Determine the base directory (directory of the current script)
-# This is generally robust for Streamlit deployments.
+# This section MUST run successfully before any other NLTK modules that depend on data are imported or used.
+
+# Define a preferred NLTK data directory within the app's folder.
+# This is generally more reliable for deployments like Streamlit Cloud.
 try:
+    # __file__ is defined when running a script.
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-except NameError: # __file__ is not defined in certain interactive environments (like a raw Python interpreter)
-    BASE_DIR = os.getcwd() # Fallback to current working directory
+except NameError:
+    # __file__ is not defined, e.g., in an interactive session or some execution environments.
+    # Fallback to current working directory.
+    BASE_DIR = os.getcwd()
 
-nltk_data_dir = os.path.join(BASE_DIR, "nltk_data")
+NLTK_DATA_DIR = os.path.join(BASE_DIR, "nltk_data")
 
-# Create the directory if it doesn't exist
-if not os.path.exists(nltk_data_dir):
+# Ensure the nltk_data directory exists.
+if not os.path.exists(NLTK_DATA_DIR):
     try:
-        os.makedirs(nltk_data_dir)
-        # st.sidebar.info(f"NLTK data directory created at: {nltk_data_dir}") # Optional: for debugging
+        os.makedirs(NLTK_DATA_DIR)
+        # st.sidebar.info(f"NLTK data directory created at: {NLTK_DATA_DIR}") # For debugging
     except OSError as e:
-        st.sidebar.error(f"Could not create NLTK data directory at {nltk_data_dir}: {e}")
-        # Fallback strategy or stop if NLTK data is absolutely critical
-        # For now, we'll let it try to use default paths if creation fails.
-        # NLTK might still find data if it's elsewhere.
-        pass # Allow script to continue, NLTK will try default paths
+        st.sidebar.error(f"Could not create NLTK data directory at {NLTK_DATA_DIR}: {e}. NLTK might not function correctly.")
+        # If directory creation fails, NLTK will try its default paths.
 
-# Add your custom path to NLTK's list of search paths
-# This ensures NLTK looks in your specified directory first.
-if os.path.exists(nltk_data_dir) and nltk_data_dir not in nltk.data.path:
-    nltk.data.path.insert(0, nltk_data_dir) # Insert at the beginning for higher priority
+# Prepend your custom path to NLTK's search paths.
+# This makes NLTK look in your specified directory first.
+if os.path.isdir(NLTK_DATA_DIR) and NLTK_DATA_DIR not in nltk.data.path:
+    nltk.data.path.insert(0, NLTK_DATA_DIR)
 
-# Now try to download to this specific path if resources are missing or verify they exist
-nltk_resources = {
-    'punkt': 'tokenizers/punkt',
-    'averaged_perceptron_tagger': 'taggers/averaged_perceptron_tagger',
-    'wordnet': 'corpora/wordnet', # Or 'corpora/omw-1.4' for newer NLTK with WordNet 2022
-    'stopwords': 'corpora/stopwords'
+# Define the resources and their expected NLTK internal paths for verification
+nltk_resources_to_check = {
+    "punkt": "tokenizers/punkt",
+    "averaged_perceptron_tagger": "taggers/averaged_perceptron_tagger",
+    "wordnet": "corpora/wordnet.zip", # Or just 'corpora/wordnet' if checking the unzipped dir
+                                    # For WordNet 2022 and later, might be 'corpora/omw-1.4.zip' or 'corpora/omw-1.4'
+    "stopwords": "corpora/stopwords.zip" # Or 'corpora/stopwords'
 }
 
-for resource_name, resource_path in nltk_resources.items():
+# Download resources if they are not found in any of the NLTK data paths.
+# The download_dir ensures they go into your specified NLTK_DATA_DIR.
+for resource_id, internal_path_check in nltk_resources_to_check.items():
     try:
-        nltk.data.find(resource_path)
-        # st.sidebar.success(f"NLTK resource '{resource_name}' found.") # Optional: for debugging
+        nltk.data.find(internal_path_check) # Verify resource exists
+        # st.sidebar.info(f"NLTK resource '{resource_id}' found.") # For debugging
     except LookupError:
-        st.sidebar.warning(f"NLTK resource '{resource_name}' not found. Attempting download to {nltk_data_dir}...")
+        st.sidebar.warning(f"NLTK resource '{resource_id}' not found. Attempting download...")
         try:
-            nltk.download(resource_name, download_dir=nltk_data_dir, quiet=True, raise_on_error=True)
-            st.sidebar.success(f"NLTK resource '{resource_name}' downloaded successfully.")
-        except Exception as e_nltk_download:
-            st.sidebar.error(f"Failed to download NLTK resource '{resource_name}' to {nltk_data_dir}: {e_nltk_download}")
-            st.sidebar.error("Please ensure this path is writable or manually place NLTK resources.")
-            # Depending on how critical, you might st.stop()
+            # Use raise_on_error=True to catch download failures explicitly.
+            nltk.download(resource_id, download_dir=NLTK_DATA_DIR, quiet=False, raise_on_error=True)
+            st.sidebar.success(f"NLTK resource '{resource_id}' downloaded to '{NLTK_DATA_DIR}'.")
+            # After download, try to find it again to be sure
+            nltk.data.find(internal_path_check)
+            st.sidebar.success(f"NLTK resource '{resource_id}' verified after download.")
+        except Exception as e_download:
+            st.sidebar.error(f"Failed to download or verify NLTK resource '{resource_id}': {e_download}")
+            st.sidebar.error(f"Please ensure '{NLTK_DATA_DIR}' is writable or manually place the '{resource_id}' package there.")
+            # If punkt is critical and fails, you might want to stop the app:
+            if resource_id == "punkt":
+                st.error("Critical NLTK resource 'punkt' could not be loaded. The app cannot continue.")
+                st.stop()
 # --- End NLTK Data Path Configuration ---
 
 
-# Import other libraries
+# Import other libraries (AFTER NLTK path setup)
 import pandas as pd
 import re
 from collections import Counter
 import numpy as np
 from keybert import KeyBERT
-from nltk.stem import WordNetLemmatizer # NLTK Stem imports after path config
-from nltk.corpus import stopwords      # NLTK Corpus imports after path config
+# These NLTK imports now happen AFTER the path and download logic
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import stopwords
 from sentence_transformers import SentenceTransformer
 import gc
 
-# stop_words can now be defined as NLTK path should be set
-stop_words = set(stopwords.words('english'))
-# --- Optional: Add domain-specific stopwords for B/C tagging ---
-# custom_bc_stopwords = {"style", "type", "series", "version", "model"}
-# stop_words.update(custom_bc_stopwords)
-# ---
+# Initialize NLTK components that rely on data AFTER the path setup
+# This ensures they use the correctly configured NLTK data environment.
+try:
+    stop_words = set(stopwords.words('english'))
+    # --- Optional: Add domain-specific stopwords for B/C tagging ---
+    # custom_bc_stopwords = {"style", "type", "series", "version", "model"}
+    # stop_words.update(custom_bc_stopwords)
+    # ---
+    lemmatizer = WordNetLemmatizer()
+    # Test a critical function to be absolutely sure
+    from nltk import word_tokenize as nltk_word_tokenize_test
+    nltk_word_tokenize_test("Test sentence.")
+    st.sidebar.info("NLTK components initialized successfully.")
+except LookupError as e_init:
+    st.sidebar.error(f"Failed to initialize NLTK components after data setup: {e_init}")
+    st.error(f"NLTK data issue persists: {e_init}. Check sidebar messages for download status and paths. The app may not function correctly.")
+    # Define fallbacks or stop if essential components fail
+    stop_words = set()
+    lemmatizer = None # Or a dummy lemmatizer
+    st.stop() # Stop if NLTK init fails as it's critical for this app
+except Exception as e_gen_init:
+    st.sidebar.error(f"An unexpected error occurred during NLTK component initialization: {e_gen_init}")
+    st.stop()
 
-lemmatizer = WordNetLemmatizer() # Initialize after path config
 
 # Initialize session state variable for tagging
 if 'full_tagging_processed' not in st.session_state:
@@ -88,9 +117,7 @@ if 'full_tagging_processed' not in st.session_state:
 # --- Model Loading (Simplified for Tagging) ---
 @st.cache_resource
 def load_tagging_models():
-    # ... (rest of the script from load_tagging_models onwards) ...
-    # NO CHANGES NEEDED TO THE REST OF THE SCRIPT BELOW THIS POINT
-    # The NLTK data path setup is done at the very beginning.
+    # ... (rest of your script from here, no changes needed to this function or below) ...
     models = {}
     try:
         sbert_model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -104,7 +131,7 @@ def load_tagging_models():
                 def __init__(self, model=None): pass
                 def extract_keywords(self, doc, keyphrase_ngram_range=(1,1), stop_words=None, top_n=5, **kwargs):
                     from sklearn.feature_extraction.text import CountVectorizer
-                    import numpy as np
+                    import numpy as np # Ensure numpy is imported here if class is self-contained
                     try:
                         sw_list = list(stop_words) if stop_words else None
                         count_model = CountVectorizer(ngram_range=keyphrase_ngram_range, stop_words=sw_list).fit([doc])
@@ -142,7 +169,8 @@ def get_tagging_keybert_model():
 def normalize_token(token):
     token_lower = token.lower()
     if token_lower == "vs": return "v"
-    return lemmatizer.lemmatize(token_lower, pos='n')
+    # Ensure lemmatizer is available
+    return lemmatizer.lemmatize(token_lower, pos='n') if lemmatizer else token_lower
 
 def normalize_phrase(phrase):
     if not isinstance(phrase, str): return ""
@@ -167,7 +195,8 @@ def pick_tags_b_c_from_tokens_pos(tokens_with_pos_tags):
     return b_tag, c_tag
 
 def classify_keyword_three_tags_enhanced(keyword, seed_to_remove, other_omitted_list, user_a_tags_set, kw_model_runtime):
-    from nltk import pos_tag as nltk_pos_tag, word_tokenize as nltk_word_tokenize 
+    # These imports are fine here as they depend on NLTK data being loaded, which is handled at the top
+    from nltk import pos_tag as nltk_pos_tag, word_tokenize as nltk_word_tokenize
 
     if kw_model_runtime is None: return "error-model", "error-model", "error-model"
     if not isinstance(keyword, str) or not keyword.strip(): return "general-other", "", ""
@@ -193,9 +222,9 @@ def classify_keyword_three_tags_enhanced(keyword, seed_to_remove, other_omitted_
     text_for_bc = ' '.join(text_for_bc.split())
 
     common_product_terms = {"door", "doors", "cabinet", "cabinets", "panel", "panels", "window", "windows"} 
-    normalized_text_for_bc = " ".join(normalize_token(t) for t in text_for_bc.lower().split())
+    normalized_text_for_bc_check = " ".join(normalize_token(t) for t in text_for_bc.lower().split()) # Use a different var name
     
-    if normalized_text_for_bc in common_product_terms and identified_a_tag != "general-other":
+    if normalized_text_for_bc_check in common_product_terms and identified_a_tag != "general-other":
         return identified_a_tag, "", normalize_token(text_for_bc.lower().strip()) 
 
     if not text_for_bc: return identified_a_tag, "", ""
@@ -220,6 +249,7 @@ def classify_keyword_three_tags_enhanced(keyword, seed_to_remove, other_omitted_
     return identified_a_tag, b_tag, c_tag
 
 def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
+    # ... (This function remains unchanged)
     freq_in_col = Counter()
     freq_in_other = Counter()
     for _, row in df.iterrows():
@@ -252,6 +282,7 @@ def realign_tags_based_on_frequency(df, col_name="B:Tag", other_col="C:Tag"):
 
 # --- Main Streamlit UI for Full Tagging ---
 st.title("🏷️ Enhanced Keyword Tagging Tool")
+# ... (The rest of the UI and processing loop remains unchanged from your previous "Full Tagging" only script)
 st.markdown("Processes keywords to assign A:Tag (Primary Category), B:Tag (Attribute 1), and C:Tag (Attribute 2).")
 
 col1, col2 = st.columns(2)
