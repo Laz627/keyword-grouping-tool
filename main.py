@@ -36,44 +36,73 @@ if os.path.isdir(NLTK_DATA_DIR) and NLTK_DATA_DIR not in nltk.data.path:
     nltk.data.path.insert(0, NLTK_DATA_DIR)
 
 # --- Download and Verify NLTK Resources ---
-# Refined paths for verification, especially for the tagger
 nltk_resources_to_download = {
-    "punkt": "tokenizers/punkt/english.pickle",
-    # The PerceptronTagger loads a model often named AP_english.json or similar,
-    # or it might look for a directory structure.
-    # Let's try to verify the base resource pickle file for the tagger.
-    "averaged_perceptron_tagger": "taggers/averaged_perceptron_tagger/averaged_perceptron_tagger.pickle",
-    # If the error mentions something like 'averaged_perceptron_tagger_eng.json',
-    # you might need to adjust the verification path or ensure that file is part of the download.
-    # For now, the .pickle is the main part of the resource.
-    "wordnet": "corpora/wordnet.zip", # NLTK usually handles unzipping
-    "stopwords": "corpora/stopwords.zip"
+    "punkt": {"id": "punkt", "check_path": "tokenizers/punkt/english.pickle"},
+    "averaged_perceptron_tagger": {"id": "averaged_perceptron_tagger", "check_path": "taggers/averaged_perceptron_tagger/averaged_perceptron_tagger.pickle"},
+    # Add the specific resource mentioned in the error, even if it's unusual.
+    # We'll try to verify the directory it's looking for.
+    "averaged_perceptron_tagger_eng": {"id": "averaged_perceptron_tagger_eng", "check_path": "taggers/averaged_perceptron_tagger_eng/"},
+    "wordnet": {"id": "wordnet", "check_path": "corpora/wordnet.zip"},
+    "stopwords": {"id": "stopwords", "check_path": "corpora/stopwords.zip"}
 }
-# The 'punkt_tab' attempt can be removed as 'punkt' seems to be working now.
 
 all_resources_loaded_successfully = True
-for resource_id, internal_path_to_verify in nltk_resources_to_download.items():
+for resource_key, resource_info in nltk_resources_to_download.items():
+    resource_id_to_download = resource_info["id"]
+    path_to_verify = resource_info["check_path"]
+    
     try:
-        nltk.data.find(internal_path_to_verify)
-        st.sidebar.info(f"NLTK resource for '{resource_id}' (checking '{internal_path_to_verify}') found.")
+        # For directories, check os.path.exists directly with the full NLTK data path
+        if path_to_verify.endswith('/'): # It's a directory path
+            full_path_to_check = os.path.join(NLTK_DATA_DIR, path_to_verify) # Check within our target dir
+            if not os.path.isdir(full_path_to_check): # More robust check for directory
+                 # Try finding it via NLTK as a fallback, which searches all paths
+                nltk.data.find(path_to_verify)
+            # If no exception, it's found
+        else: # It's a file path
+            nltk.data.find(path_to_verify)
+        st.sidebar.info(f"NLTK resource '{resource_id_to_download}' (checking '{path_to_verify}') found.")
     except LookupError:
-        st.sidebar.warning(f"NLTK resource for '{resource_id}' (checking '{internal_path_to_verify}') not found. Attempting download of '{resource_id}'...")
+        st.sidebar.warning(f"NLTK resource '{resource_id_to_download}' (checking '{path_to_verify}') not found. Attempting download of '{resource_id_to_download}'...")
         try:
-            is_quiet = False if resource_id in ["punkt", "averaged_perceptron_tagger"] else True # Verbose for critical ones
-            nltk.download(resource_id, download_dir=NLTK_DATA_DIR, quiet=is_quiet, raise_on_error=True)
-            st.sidebar.success(f"NLTK resource '{resource_id}' downloaded to '{NLTK_DATA_DIR}'.")
+            is_quiet = False if resource_id_to_download.startswith("averaged_perceptron_tagger") or resource_id_to_download == "punkt" else True
+            nltk.download(resource_id_to_download, download_dir=NLTK_DATA_DIR, quiet=is_quiet, raise_on_error=True)
+            st.sidebar.success(f"NLTK resource '{resource_id_to_download}' downloaded to '{NLTK_DATA_DIR}'.")
+            
             # Attempt to verify again
-            nltk.data.find(internal_path_to_verify)
-            st.sidebar.success(f"NLTK resource for '{resource_id}' verified after download.")
+            if path_to_verify.endswith('/'):
+                full_path_to_check = os.path.join(NLTK_DATA_DIR, path_to_verify)
+                if not os.path.isdir(full_path_to_check):
+                    # Try NLTK's find one last time for the directory
+                    nltk.data.find(path_to_verify) 
+            else:
+                nltk.data.find(path_to_verify)
+            st.sidebar.success(f"NLTK resource '{resource_id_to_download}' verified after download.")
+
+        except ValueError as ve: # Handles cases where download ID might be invalid
+            if resource_id_to_download == "averaged_perceptron_tagger_eng":
+                st.sidebar.warning(f"Could not download '{resource_id_to_download}' directly (may not be a standard NLTK package ID). "
+                                   "Hoping the main 'averaged_perceptron_tagger' package includes necessary components.")
+                # Don't mark as critical failure for this specific one, rely on the main package.
+            else:
+                st.sidebar.error(f"Failed to download '{resource_id_to_download}': {ve} (Possibly invalid NLTK package ID).")
+                all_resources_loaded_successfully = False
         except Exception as e_download:
-            st.sidebar.error(f"Failed to download or verify NLTK resource '{resource_id}': {e_download}")
+            st.sidebar.error(f"Failed to download or verify NLTK resource '{resource_id_to_download}': {e_download}")
             all_resources_loaded_successfully = False
-            if resource_id in ["punkt", "averaged_perceptron_tagger"]:
-                st.error(f"Critical NLTK '{resource_id}' data could not be loaded. App cannot continue.")
+            if resource_id_to_download in ["punkt", "averaged_perceptron_tagger"]:
+                st.error(f"Critical NLTK '{resource_id_to_download}' data could not be loaded. App cannot continue.")
                 st.stop()
 
 if not all_resources_loaded_successfully:
-    st.warning("One or more NLTK resources may have failed to load fully. Check sidebar. App might proceed with caution.")
+    # Check if the main tagger at least downloaded, even if _eng check is tricky
+    try:
+        nltk.data.find(nltk_resources_to_download["averaged_perceptron_tagger"]["check_path"])
+    except LookupError:
+        st.error("Main 'averaged_perceptron_tagger' resource also failed. App cannot reliably perform POS tagging.")
+        st.stop()
+    st.warning("One or more optional NLTK resources may have failed to load fully. Check sidebar. App might proceed with caution if main tagger is present.")
+
 
 # Import other libraries (AFTER NLTK path setup)
 import pandas as pd
@@ -83,47 +112,36 @@ import numpy as np
 from keybert import KeyBERT
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
-from nltk import word_tokenize as nltk_word_tokenize_import, pos_tag as nltk_pos_tag_import # Import them here
+from nltk import word_tokenize as nltk_word_tokenize_import, pos_tag as nltk_pos_tag_import
 from sentence_transformers import SentenceTransformer
 import gc
 
-# Initialize NLTK components that rely on data AFTER the path setup AND IMPORTS
+# Initialize NLTK components
 try:
-    # Test tokenization first
-    test_tokens = nltk_word_tokenize_import("This is a test sentence for NLTK punkt.")
-    if not test_tokens:
-        raise ValueError("NLTK word_tokenize returned empty for a test sentence.")
+    test_tokens = nltk_word_tokenize_import("This is a test sentence.")
+    if not test_tokens: raise ValueError("word_tokenize test failed.")
     
-    # Test POS tagging second
-    test_pos_tags = nltk_pos_tag_import(test_tokens)
-    if not test_pos_tags:
-        raise ValueError("NLTK pos_tag returned empty for test tokens.")
+    test_pos_tags = nltk_pos_tag_import(test_tokens) # This is the critical test now
+    if not test_pos_tags: raise ValueError("pos_tag test failed.")
 
-    # If both worked, then initialize others
     stop_words_set = set(stopwords.words('english'))
     lemmatizer_instance = WordNetLemmatizer()
     st.sidebar.success("NLTK components (tokenizer, POS tagger, stopwords, lemmatizer) initialized successfully.")
 except LookupError as e_init_lookup:
     st.sidebar.error(f"CRITICAL NLTK LookupError during component initialization: {e_init_lookup}")
-    st.error(f"A critical NLTK resource is still missing despite download attempts. The error suggests: {e_init_lookup}. App cannot continue.")
+    st.error(f"A critical NLTK resource is still missing. The error suggests: {e_init_lookup}. App cannot continue. Please check the NLTK_DATA_DIR '{NLTK_DATA_DIR}' and ensure it contains the correct subdirectories and files for the tagger (e.g., 'taggers/averaged_perceptron_tagger_eng/').")
     st.stop()
 except Exception as e_init_general:
     st.sidebar.error(f"Unexpected error during NLTK component initialization: {e_init_general}")
     st.error("An unexpected error occurred setting up NLTK. The app cannot continue.")
     st.stop()
 
-# Assign to global-like variables used by the rest of the script
 stop_words = stop_words_set
 lemmatizer = lemmatizer_instance
 
-
-# Initialize session state variable for tagging
+# ... (The rest of your script from "Initialize session state variable for tagging" onwards remains unchanged) ...
 if 'full_tagging_processed' not in st.session_state:
     st.session_state.full_tagging_processed = False
-
-# ... (The rest of your script from "@st.cache_resource def load_tagging_models():" onwards remains unchanged)
-# Ensure that your classify_keyword_three_tags_enhanced uses `nltk_word_tokenize_import` and `nltk_pos_tag_import`
-# or re-imports them locally like `from nltk import word_tokenize, pos_tag`.
 
 # --- Model Loading (Simplified for Tagging) ---
 @st.cache_resource
@@ -141,7 +159,7 @@ def load_tagging_models():
                 def __init__(self, model=None): pass
                 def extract_keywords(self, doc, keyphrase_ngram_range=(1,1), stop_words=None, top_n=5, **kwargs):
                     from sklearn.feature_extraction.text import CountVectorizer
-                    import numpy as np
+                    import numpy as np 
                     try:
                         sw_list = list(stop_words) if stop_words else None
                         count_model = CountVectorizer(ngram_range=keyphrase_ngram_range, stop_words=sw_list).fit([doc])
@@ -204,9 +222,6 @@ def pick_tags_b_c_from_tokens_pos(tokens_with_pos_tags):
     return b_tag, c_tag
 
 def classify_keyword_three_tags_enhanced(keyword, seed_to_remove, other_omitted_list, user_a_tags_set, kw_model_runtime):
-    # Use the already imported and tested versions
-    # from nltk import pos_tag as nltk_pos_tag, word_tokenize as nltk_word_tokenize 
-
     if kw_model_runtime is None: return "error-model", "error-model", "error-model"
     if not isinstance(keyword, str) or not keyword.strip(): return "general-other", "", ""
 
@@ -243,8 +258,8 @@ def classify_keyword_three_tags_enhanced(keyword, seed_to_remove, other_omitted_
     b_tag, c_tag = "", ""
     if keyphrases:
         candidate_for_bc = keyphrases[0][0].lower()
-        tokens_from_candidate = nltk_word_tokenize_import(candidate_for_bc) # Use imported alias
-        tagged_candidate_tokens = nltk_pos_tag_import(tokens_from_candidate) # Use imported alias
+        tokens_from_candidate = nltk_word_tokenize_import(candidate_for_bc) 
+        tagged_candidate_tokens = nltk_pos_tag_import(tokens_from_candidate) 
         b_tag, c_tag = pick_tags_b_c_from_tokens_pos(tagged_candidate_tokens)
         if not b_tag and tokens_from_candidate:
             simple_bc_tokens = [normalize_token(t) for t in tokens_from_candidate 
@@ -252,8 +267,8 @@ def classify_keyword_three_tags_enhanced(keyword, seed_to_remove, other_omitted_
             b_tag = simple_bc_tokens[0] if len(simple_bc_tokens) >= 1 else ""
             c_tag = simple_bc_tokens[1] if len(simple_bc_tokens) >= 2 else ""
     else:
-        tokens_from_text_for_bc = nltk_word_tokenize_import(text_for_bc) # Use imported alias
-        tagged_text_for_bc_tokens = nltk_pos_tag_import(tokens_from_text_for_bc) # Use imported alias
+        tokens_from_text_for_bc = nltk_word_tokenize_import(text_for_bc) 
+        tagged_text_for_bc_tokens = nltk_pos_tag_import(tokens_from_text_for_bc) 
         b_tag, c_tag = pick_tags_b_c_from_tokens_pos(tagged_text_for_bc_tokens)
     return identified_a_tag, b_tag, c_tag
 
