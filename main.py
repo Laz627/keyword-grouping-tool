@@ -17,6 +17,39 @@ import nltk
 from nltk.stem import WordNetLemmatizer
 from sentence_transformers import SentenceTransformer
 import gc
+import os
+
+nltk_data_dir = os.path.join(os.path.dirname(__file__), "nltk_data") 
+# For local development, you might use a more standard user location,
+# but for deployment, a relative path is often better.
+# Example for local: nltk_data_dir = os.path.expanduser("~/nltk_data")
+
+# Create the directory if it doesn't exist
+if not os.path.exists(nltk_data_dir):
+    try:
+        os.makedirs(nltk_data_dir)
+    except OSError as e:
+        st.error(f"Could not create NLTK data directory at {nltk_data_dir}: {e}")
+        # Fallback or stop if critical
+        nltk_data_dir = None # Indicate failure
+
+if nltk_data_dir:
+    # Add your custom path to NLTK's list of search paths
+    if nltk_data_dir not in nltk.data.path:
+        nltk.data.path.append(nltk_data_dir)
+
+    # Now try to download to this specific path if resources are missing
+    try:
+        nltk.download('punkt', download_dir=nltk_data_dir, quiet=True, raise_on_error=True)
+        nltk.download('averaged_perceptron_tagger', download_dir=nltk_data_dir, quiet=True, raise_on_error=True)
+        nltk.download('wordnet', download_dir=nltk_data_dir, quiet=True, raise_on_error=True)
+        nltk.download('stopwords', download_dir=nltk_data_dir, quiet=True, raise_on_error=True)
+    except Exception as e_nltk_download:
+        st.error(f"Failed to download NLTK resources to {nltk_data_dir}: {e_nltk_download}")
+        st.error("Please ensure the 'nltk_data' directory can be created and written to, or manually place NLTK resources there.")
+        # You might want to st.stop() here if NLTK is critical
+else:
+    st.error("NLTK data directory not configured. NLTK functionalities might fail.")
 
 # NLTK Resource Downloads (essential for tagging)
 nltk.download('punkt', quiet=True)
