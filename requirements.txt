@@ -1,10 +1,10 @@
-streamlit>=1.31.0
-pandas>=2.0.0
-numpy>=1.24.0
+streamlit==1.33.0 # Or your desired Streamlit version
+torch==2.0.1     # A common, stable version. Adjust if needed.
+transformers==4.34.0 # Often a dependency of sentence-transformers.
+sentence-transformers==2.7.0 # Or a recent stable version.
+keybert
 nltk
-keybert>=0.7.0
-sentence-transformers>=2.2.2
-scikit-learn>=1.2.2
-matplotlib>=3.7.0
-python-docx
-openpyxl
+pandas
+numpy
+scikit-learn
+openpyxl # If you process .xlsx files
