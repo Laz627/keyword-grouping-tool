@@ -22,10 +22,10 @@ from nltk.stem import WordNetLemmatizer
 import openai
 
 # Download required NLTK resources (quietly)
-#nltk.download('punkt', quiet=True)
-#nltk.download('averaged_perceptron_tagger', quiet=True)
-#nltk.download('wordnet', quiet=True)
-#nltk.download('stopwords', quiet=True)
+nltk.download('punkt', quiet=True)
+nltk.download('averaged_perceptron_tagger', quiet=True)
+nltk.download('wordnet', quiet=True)
+nltk.download('stopwords', quiet=True)
 from nltk.corpus import stopwords
 stop_words = set(stopwords.words('english'))
 
