@@ -1,15 +1,23 @@
-# Set page config first
+import nltk
+import os
+import shutil
+import torch # Import torch first
+
+# Workaround for Streamlit/Torch __path__ issue
+if hasattr(torch, 'classes') and hasattr(torch.classes, '__path__'):
+    torch.classes.__path__ = []
+elif not hasattr(torch, 'classes'):
+    # This case might indicate a very different torch structure or a minimal install
+    # For now, we'll assume it's not the primary issue if the error is about __path__._path
+    pass
+
 import streamlit as st
+
 st.set_page_config(
     page_title="Maximized Keyword Tagging Tool with MSV",
     page_icon="🏷️📊",
     layout="wide",
     initial_sidebar_state="expanded"
-)
-
-import nltk
-import os
-import shutil
 
 # --- NLTK Data Path Configuration ---
 try:
