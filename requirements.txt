@@ -3,7 +3,7 @@ torch==2.0.1     # A common, stable version. Adjust if needed.
 transformers==4.34.0 # Often a dependency of sentence-transformers.
 sentence-transformers==2.7.0 # Or a recent stable version.
 keybert
-nltk
+nltk==3.8.1
 pandas
 numpy
 scikit-learn
